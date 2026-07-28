@@ -291,8 +291,63 @@ documented EC-include patch):**
 
 ## Proof (x86_64-linux-gnu leg, ubuntu-24.04, CI)
 
-PENDING — filled from the CI run (run ids, artifact sizes, closure
-evidence, boot-smoke output).
+**Build + stage + boot-smoke: PROVEN on CI** (run **30348124035**,
+2026-07-28, ubuntu-24.04; whole leg 5m7s).
+
+- All 6 sources sha256-verified; libsexpp populated; BOTH feedstock
+  patches applied (`git apply --check`): the Botan-3.12 EC includes and
+  the gcc-13 `<cstring>` fix (the latter found by THIS leg — rnp
+  0.18.1's `mem.cpp` uses `strlen()` without the include; macOS clang
+  leaks it transitively, gcc 13 does not).
+- Botan 3.12.0 full build: PQC module assertion passed (same macro set
+  as the macOS leg). bzip2 shim asserted (`bz_internal_shim.o` in the
+  archive, `T bz_internal_error` in nm). librnp `ENABLE_PQC=ON`
+  confirmed (CMakeCache + config.h).
+- `libtebako-crypto.so.1` linked with `-static-libstdc++
+  -static-libgcc` and the export version script.
+
+**Closure: PROVEN** (`readelf -d`, hard sweep in tools/build and again
+in boot_smoke on the in-image artifact):
+
+```
+NEEDED = libm.so.6, libc.so.6, ld-linux-x86-64.so.2
+SONAME = libtebako-crypto.so.1
+```
+
+libstdc++/libgcc do not even appear (static) — the runtime closure is
+libc/libm and the loader, nothing else.
+
+**Export surface: PROVEN** — `nm -D --defined-only` lists exactly the
+18 ABI symbols. The version script (`{ global: tebako_crypto_v1_*;
+local: *; }`) was added after CI caught two exported libstdc++ vector
+template instantiations (`_GLIBCXX_VISIBILITY` pragmas override
+`-fvisibility=hidden`; `--exclude-libs,ALL` does not cover our own
+object) — evidence that the hard check earns its keep.
+
+**Pre-image smoke: PROVEN** (dlopen harness, empty environment — same
+full ABI exercise as the macOS leg, all green).
+
+**Image + boot-smoke from the image: PROVEN.** mkdwarfs
+(libtfs-linux-gnu binary, sha256-verified):
+`tebako-crypto-0.18.1-x86_64-linux-gnu.dwarfs` = **3.4 MB**. boot_smoke
+(tebakofs extract; harness against the shipped header, `env -i`):
+
+```
+[tpkg] readelf sweep: NEEDED = libm.so.6, libc.so.6, ld-linux-x86-64.so.2
+[tpkg] BOOT_SMOKE_OK tebako-crypto-0.18.1-x86_64-linux-gnu.dwarfs
+```
+
+**CI archaeology (why the tooling looks the way it does):** runs
+30335788723 (mem.cpp `<cstring>`), 30336644114 (libstdc++ export leak),
+30337191027 (dwarfsextract hang — 90 min before cancellation), and
+30344711048 (same hang, cancelled at 44 min) are the failures this
+feedstock's current shape is the answer to; run **30348124035** is the
+green one (also the first run with libtfs tooling on the linux leg:
+whole-leg time fell from 44+ min to 5m7s).
+
+The macOS CI leg of run 30348124035 (5m35s) independently re-proved the
+local macOS evidence above, image `tebako-crypto-0.18.1-aarch64-macos.tfs`
+= 1.9 MB, `BOOT_SMOKE_OK` from the image.
 
 ## Known limitations (honest list)
 
