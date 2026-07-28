@@ -96,11 +96,10 @@ build:
 
 image:
   format: dwarfs
-  # .dwarfs for the linux legs; .tfs (tebako fs image — same DwarFS
-  # format, libtfs tooling/branding) for the macOS legs.
+  # .tfs everywhere (tebako fs image — the DwarFS-T format, our own
+  # extension; never the legacy .dwarfs).
   extension:
-    default: dwarfs
-    aarch64-macos: tfs
+    default: tfs
   # Image tooling: mkdwarfs + tebakofs from tamatebako/libtfs releases
   # (static binaries, libSystem+libc++ / glibc-only), sha256-pinned from
   # the release SHA256SUMS, re-verified on first fetch. Used on BOTH
