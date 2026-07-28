@@ -34,16 +34,23 @@ Dir[File.join(out_dir, "dwarfs-t-bin", "*-macos-*")].each do |f|
   tools[t] = f if File.executable?(f)
 end
 
-# the dwarfs fuse driver needs fusermount3 (setuid helper); CI runners and
-# slim containers have /dev/fuse but no fuse3 package
-if !macos && !system("command -v fusermount3 >/dev/null 2>&1") && system("command -v apt-get >/dev/null 2>&1")
+# the dwarfs fuse driver needs fusermount3 (setuid helper); only the
+# opt-in mount path (TPKG_TRY_FUSE=1) needs it
+if !macos && ENV["TPKG_TRY_FUSE"] == "1" && !system("command -v fusermount3 >/dev/null 2>&1") && system("command -v apt-get >/dev/null 2>&1")
   sudo = Process.uid.zero? ? [] : ["sudo"]
   Tpkg.sh(*sudo, "apt-get", "install", "-y", "-qq", "fuse3")
 end
 
 mnt = nil
 extracted = nil
-if !macos && tools["dwarfs"] && File.exist?("/dev/fuse")
+# Mount-mode smoke is OPT-IN (TPKG_TRY_FUSE=1): on GHA the dwarfs fuse
+# driver wedges the mountpoint without serving it (inkscape hit the same
+# wall and left its smoke advisory) — and a stat on a dead fuse mount
+# blocks uninterruptibly in the kernel, hanging the job past any poll
+# bound. A LIBRARY payload needs no FUSE semantics: extracting the image
+# and dlopening the .so proves the same bytes, so extract is the default
+# everywhere, not a degradation.
+if !macos && ENV["TPKG_TRY_FUSE"] == "1" && tools["dwarfs"] && File.exist?("/dev/fuse")
   mnt = Dir.mktmpdir("tpkg-mnt")
   # foreground (-f, honored by libfuse): keeps driver output on the log and
   # the process under our control; poll briefly for the mount to appear
@@ -54,9 +61,6 @@ if !macos && tools["dwarfs"] && File.exist?("/dev/fuse")
     point = mnt
     Tpkg.log("mounted #{img} at #{mnt}")
   else
-    # A library payload needs no FUSE semantics — fall back to extract
-    # (the mount-mode driver flakiness on GHA is dwarfs-t territory, not
-    # this feedstock's; the extract path proves the same bytes).
     Process.kill("TERM", pid) rescue nil
     sleep 1
     system("fusermount3", "-u", mnt) || system("fusermount", "-u", mnt) || system("umount", mnt)
