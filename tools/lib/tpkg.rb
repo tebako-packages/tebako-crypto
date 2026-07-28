@@ -124,13 +124,10 @@ module Tpkg
   end
 
   # Locate or obtain the image tools (mkdwarfs + a mount/extract helper).
-  # Order: $MKDWARFS env → libtfs release assets (macOS legs) → tool cache →
-  # pinned dwarfs-t source build (linux legs; no published dwarfs-t releases
-  # exist — see build-notes). The macOS legs use tamatebako/libtfs release
-  # binaries (sha256-pinned in recipe image.libtfs): dwarfs-t has no macOS
-  # releases and building it on macOS is untested, while libtfs ships a
-  # static mkdwarfs plus tebakofs (multi-backend CLI; `tebakofs extract`
-  # replaces dwarfsextract for the FUSE-less degraded boot-smoke).
+  # Order: $MKDWARFS env → libtfs release assets (sha256-pinned in recipe
+  # image.libtfs; BOTH platform families — see recipe.yml for why the
+  # dwarfs-t source build is avoided) → tool cache → pinned dwarfs-t
+  # source build (fallback for platforms without libtfs pins).
   def ensure_dwarfs_tools(recipe, platform: nil)
     if ENV["MKDWARFS"] && File.executable?(ENV["MKDWARFS"])
       log("using $MKDWARFS=#{ENV['MKDWARFS']}")
@@ -140,21 +137,24 @@ module Tpkg
                "tebakofs" => ENV["TEBAKOFS"] }.compact
     end
 
-    if platform&.end_with?("-macos")
-      spec = recipe.fetch("image").fetch("libtfs")
-      arch = { "aarch64-macos" => "arm64", "x86_64-macos" => "x86_64" }.fetch(platform)
-      dir = File.join(cache_dir, "tools", "libtfs-#{spec['release']}")
-      FileUtils.mkdir_p(dir)
-      tools = {}
-      %w[mkdwarfs tebakofs].each do |t|
-        asset = "#{t}-macos-#{arch}"
-        want = spec.fetch("sha256").fetch(asset)
-        bin = Tpkg.fetch("https://github.com/tamatebako/libtfs/releases/download/#{spec['release']}/#{asset}",
-                         File.join(dir, asset), want)
-        FileUtils.chmod(0o755, bin)
-        tools[t] = bin
+    if platform
+      spec = recipe.dig("image", "libtfs")
+      arch = { "aarch64-macos" => "macos-arm64", "x86_64-macos" => "macos-x86_64",
+               "x86_64-linux-gnu" => "linux-gnu-x86_64", "aarch64-linux-gnu" => "linux-gnu-arm64" }[platform]
+      if spec && arch && spec.dig("sha256", "mkdwarfs-#{arch}")
+        dir = File.join(cache_dir, "tools", "libtfs-#{spec['release']}")
+        FileUtils.mkdir_p(dir)
+        tools = {}
+        %w[mkdwarfs tebakofs].each do |t|
+          asset = "#{t}-#{arch}"
+          want = spec.fetch("sha256").fetch(asset)
+          bin = Tpkg.fetch("https://github.com/tamatebako/libtfs/releases/download/#{spec['release']}/#{asset}",
+                           File.join(dir, asset), want)
+          FileUtils.chmod(0o755, bin)
+          tools[t] = bin
+        end
+        return tools
       end
-      return tools
     end
 
     pin = recipe.fetch("image").fetch("dwarfs_t")

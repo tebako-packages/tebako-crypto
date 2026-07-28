@@ -185,13 +185,20 @@ stateless — key material is passed per call and never retained.
 
 ## Image tooling
 
-Same rules as the inkscape feedstock: linux legs build mkdwarfs-t from
-the pinned dwarfs-t commit `05e31631` (tag `tebako-v0.14.1-18`; no
-published dwarfs-t releases exist) against the feedstock's pinned vcpkg
-baseline — the recipe's `build.vcpkg` pin exists for THIS only (its
-ports list is empty; vcpkg is not a crypto-dependency supplier).
-macOS legs download mkdwarfs + tebakofs from tamatebako/libtfs release
-v0.13.0, sha256-pinned in `recipe.yml` (`image.libtfs`).
+mkdwarfs + tebakofs come from tamatebako/libtfs release v0.13.0 on BOTH
+platform families (static binaries; sha256-pinned in `recipe.yml`
+`image.libtfs`, re-verified on first fetch). The inkscape feedstock's
+linux pattern — building mkdwarfs/dwarfs/dwarfsextract from the pinned
+dwarfs-t commit with vcpkg — was evaluated and rejected here, on
+evidence: the dwarfs-t-built **dwarfsextract hangs on GHA runners**
+(run 30337191027's boot-smoke hung 90 minutes inside dwarfsextract
+before cancellation; inkscape never hit it because its smoke dies on
+the mount attempt first and stays advisory `|| true`). tebakofs extract
+is the proven extractor on both legs. The mount-mode fuse path is
+unneeded for a library payload: boot_smoke is extract-mode by default
+(TPKG_TRY_FUSE=1 keeps a mount experiment possible on fuse-known-good
+hosts, with the dwarfs-t source build remaining as the fallback for
+platforms without libtfs pins).
 
 ## Proof (aarch64-macos leg, native Apple Silicon host)
 

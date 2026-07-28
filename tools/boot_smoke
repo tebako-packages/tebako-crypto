@@ -28,10 +28,12 @@ tools = Tpkg.ensure_dwarfs_tools(recipe, platform: platform)
   staged = File.join(out_dir, "dwarfs-t-bin", t)
   tools[t] = staged if File.executable?(staged)
 end
-# the staged macOS tools keep their release asset names (mkdwarfs-macos-arm64)
-Dir[File.join(out_dir, "dwarfs-t-bin", "*-macos-*")].each do |f|
-  t = File.basename(f).sub(/-macos-(arm64|x86_64)\z/, "")
-  tools[t] = f if File.executable?(f)
+# the staged tools keep their release asset names (mkdwarfs-linux-gnu-x86_64,
+# tebakofs-macos-arm64, …) — map them back to the bare tool names
+Dir[File.join(out_dir, "dwarfs-t-bin", "*")].each do |f|
+  base = File.basename(f)
+  t = base.sub(/-(macos|linux-gnu|linux-musl)-(arm64|x86_64)(\.exe)?\z/, "")
+  tools[t] = f if t != base && File.executable?(f)
 end
 
 # the dwarfs fuse driver needs fusermount3 (setuid helper); only the

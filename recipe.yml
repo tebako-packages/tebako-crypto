@@ -89,15 +89,6 @@ build:
     - xz-utils
     - ruby                    # feedstock tools
 
-  # vcpkg is NOT a crypto-dependency supplier here (every crypto dep is
-  # source-built above; ports list is empty by design). The pin exists
-  # for the dwarfs-t image-tool build on the linux legs (tools/stage,
-  # Tpkg.ensure_dwarfs_tools) — dwarfs-t builds against this baseline.
-  vcpkg:
-    git: "https://github.com/microsoft/vcpkg.git"
-    commit: "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3"   # tag 2026.06.24
-    ports: []
-
   brew_packages:              # macOS legs (macos-14 runners): toolchain only.
     - cmake                   # NO crypto libraries from brew, ever — every
     - ninja                   # crypto dependency is source-built above.
@@ -110,20 +101,24 @@ image:
   extension:
     default: dwarfs
     aarch64-macos: tfs
-  # linux legs: mkdwarfs-t from tamatebako/dwarfs-t (no published
-  # releases as of 2026-07-27), built from this pinned commit unless
-  # $MKDWARFS/$DWARFS point at prebuilt binaries.
-  dwarfs_t:
-    git: "https://github.com/tamatebako/dwarfs-t.git"
-    commit: "05e316313f7259ccca163e8cdb42cb7058bb3c59"  # tag tebako-v0.14.1-18
-  # macOS legs: mkdwarfs + tebakofs from tamatebako/libtfs releases
-  # (static binaries, libSystem+libc++ only); sha256 pins from the
-  # release SHA256SUMS, re-verified on first fetch.
+  # Image tooling: mkdwarfs + tebakofs from tamatebako/libtfs releases
+  # (static binaries, libSystem+libc++ / glibc-only), sha256-pinned from
+  # the release SHA256SUMS, re-verified on first fetch. Used on BOTH
+  # platform families: the dwarfs-t source build inkscape uses for its
+  # linux legs is avoided here — its dwarfsextract HANGS on GHA runners
+  # (proven: run 30337191027's boot-smoke hung 90 min in dwarfsextract;
+  # inkscape never hit it because its smoke dies on the mount attempt
+  # first and stays advisory). tebakofs extract is the proven extractor
+  # on both legs; the mount-mode fuse path is not needed for a library
+  # payload (boot_smoke is extract-mode by default, TPKG_TRY_FUSE=1
+  # experiments aside).
   libtfs:
     release: "v0.13.0"
     sha256:
       mkdwarfs-macos-arm64: "77c2d2c395a37a739ac73711ceb1011efdf2f8200aab1df4961ea0cff3fc959c"
       tebakofs-macos-arm64: "f29a5e19b5c01ef5639099a65f12176f9d1afa36e3df3c03691568d09cf89357"
+      mkdwarfs-linux-gnu-x86_64: "72eca73a8e55c44e157e123f7b5b957fe5947015615da8c0526a100838b51070"
+      tebakofs-linux-gnu-x86_64: "4d13cc7413b8ab10b0f3f2f4fe8f1bdff0dba0ff802ba6702a40280d928b9d52"
 
 # Phase A legs (the feedstock matrix pattern): the dogfood platform and
 # the most common server platform. aarch64-linux-gnu and x86_64-macos
