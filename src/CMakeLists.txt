@@ -93,9 +93,18 @@ elseif(UNIX)
     VERSION 1.0.0
     SOVERSION 1)
   # libstdc++/libgcc ride inside: runtime deps shrink to libc/libm.
+  # --exclude-libs,ALL hides the static archives' symbols; the version
+  # script is the hard guarantee that ONLY the v1 ABI is exported —
+  # libstdc++ template instantiations carry default visibility via
+  # _GLIBCXX_VISIBILITY (a pragma), which -fvisibility=hidden cannot
+  # override, but a version script's local:* can.
+  set(TEBAKO_VERSION_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/tebako_crypto_v1.map")
+  file(WRITE "${TEBAKO_VERSION_SCRIPT}"
+"{\n  global: tebako_crypto_v1_*; tebako_crypto_rnp_version_string;\n  local: *;\n};\n")
   target_link_options(tebako-crypto PRIVATE
     -static-libstdc++ -static-libgcc
-    -Wl,--exclude-libs,ALL)
+    -Wl,--exclude-libs,ALL
+    "-Wl,--version-script=${TEBAKO_VERSION_SCRIPT}")
   target_link_libraries(tebako-crypto PRIVATE pthread)
 endif()
 
