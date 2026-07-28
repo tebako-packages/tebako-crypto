@@ -117,6 +117,12 @@ once, for every consumer of the toolkit.
   change, harmless against older Botan. Upstream rnp main carries the
   same implicit dependency and will need the same fix when it moves to
   Botan 3.12.
+- `tfs-rnp-0-18-x-gcc13-mem-cstring.patch` — `crypto/mem.cpp` uses
+  `strlen()` without `<cstring>`; macOS clang/libc++ leaks the
+  declaration transitively, gcc 13/libstdc++ (ubuntu-24.04) does not.
+  One-line include addition, identical to the fix upstream rnp main
+  carries in the same file (found by the linux CI leg, rehearsed in a
+  linux/amd64 docker container before re-push).
 
 ## The link (closure rule)
 
