@@ -1,0 +1,138 @@
+# Feedstock recipe for tebako-crypto
+# spec 13 §9 + docs/conventions.md in tebako-packages/index
+#
+# The crypto toolkit payload (roadmap 72/73): libtebako-crypto, a shared
+# library exposing the versioned C ABI tebako_crypto_v1_* over librnp
+# (OpenPGP) + Botan 3 with full PQC. This feedstock is the ONLY rnp
+# compilation site in the tebako ecosystem (owner-locked): built once,
+# from source, with our flags; everything else dlopens the payload.
+name: "tebako-crypto"
+kind: toolkit
+summary: "OpenPGP crypto toolkit (librnp + Botan 3, full PQC) — libtebako-crypto v1 C ABI"
+
+# The payload version tracks the librnp release; packaging re-releases
+# use the <version>-N tag suffix (conventions.md).
+upstream:
+  version: "0.18.1"
+
+# Every source is fetched over TLS and sha256-verified before use
+# (Tpkg.fetch). NEVER upstream prebuilts — the whole point of the
+# feedstock (roadmap 72: "built ONCE, FROM SOURCE ... our flags, our
+# attestation. Upstream prebuilt correctness stops mattering anywhere").
+sources:
+  rnp:
+    url: "https://github.com/rnpgp/rnp/archive/refs/tags/v0.18.1.tar.gz"
+    sha256: "8133cb825e6672725b33f93b8f4185d702b7444c58240f00d9f3dc886f5b0aae"
+    version: "0.18.1"
+  # rnp's src/libsexpp is a git submodule — GitHub's auto-generated tag
+  # archive ships it EMPTY. Fetched separately at the exact commit the
+  # superproject pins at tag v0.18.1 (gitlink recorded in rnpgp/rnp's
+  # tree; retrieved via the GitHub API and re-verified by sha256 here).
+  sexpp:
+    url: "https://github.com/rnpgp/sexpp/archive/c641a2f36520bab783657a58650d9fda548b9dec.tar.gz"
+    sha256: "0a4efa2f1a2f89be9fbd268f3e48fc0ebfb5d32bb989ad5d1942b52de2f49ce5"
+    version: "c641a2f3 (rnp v0.18.1 submodule pin)"
+  botan:
+    url: "https://botan.randombit.net/releases/Botan-3.12.0.tar.xz"
+    sha256: "5370f98dc15f8c222ee1ce52cd61c8756a53be0dc57cc4c1b0714d5a09ad74fb"
+    version: "3.12.0"
+  json-c:
+    url: "https://github.com/json-c/json-c/archive/refs/tags/json-c-0.18-20240915.tar.gz"
+    sha256: "3112c1f25d39eca661fe3fc663431e130cc6e2f900c081738317fba49d29e298"
+    version: "0.18"
+  zlib:
+    url: "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+    sha256: "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+    version: "1.3.1"
+  bzip2:
+    url: "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+    sha256: "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269"
+    version: "1.0.8"
+
+build:
+  system: cmake
+  link_mode: dynamic          # dlopen'd payload; the consumer wires resolution
+  # macOS floor (owner-locked; the 0.1.8-prebuilt-was-macOS-26 lesson):
+  # exported as MACOSX_DEPLOYMENT_TARGET for every compile in the leg,
+  # and passed to the cmake builds.
+  macos_deployment_target: "11.0"
+
+  # Full Botan, only the "unsupported" module group dropped (owner-locked:
+  # "minimal and pqc are mutually exclusive"; size is irrelevant by
+  # design — the toolkit is a separate download, never in the bootstrap).
+  # Botan always emits -fPIC for its static lib ("so that position
+  # independent executables can be created that link to the static
+  # library" — configure.py), so no PIC knob is needed. PQC modules
+  # (KYBER/DILITHIUM/SPHINCS_PLUS_* and the standardized
+  # ML_KEM/ML_DSA/SLH_DSA_* successors) are asserted present at build
+  # time — see tools/build.
+  botan_configure: "--disable-shared-library --disable-modules=unsupported --build-targets=static"
+
+  # The flags that are the whole point of the exercise.
+  rnp_cmake_options:
+    CRYPTO_BACKEND: "botan3"        # rnp defaults to botan2 autodetect
+    ENABLE_PQC: "ON"                # rnp defaults PQC OFF — REQUIRED ON
+    BUILD_SHARED_LIBS: "OFF"        # static librnp into our shared lib
+    BUILD_TESTING: "OFF"
+    DOWNLOAD_GTEST: "OFF"
+    ENABLE_CRYPTO_REFRESH: "ON"     # v6/crypto-refresh: the PQC wire formats
+    CMAKE_POSITION_INDEPENDENT_CODE: "ON"
+
+  system_packages:            # ubuntu-24.04 (apt) names — toolchain only
+    - build-essential
+    - cmake
+    - ninja-build
+    - python3                 # Botan's configure.py
+    - pkg-config
+    - curl
+    - ca-certificates
+    - xz-utils
+    - ruby                    # feedstock tools
+
+  brew_packages:              # macOS legs (macos-14 runners): toolchain only.
+    - cmake                   # NO crypto libraries from brew, ever — every
+    - ninja                   # crypto dependency is source-built above.
+    - ruby                    # feedstock tools need >= 2.7; system ruby is 2.6
+
+image:
+  format: dwarfs
+  # .dwarfs for the linux legs; .tfs (tebako fs image — same DwarFS
+  # format, libtfs tooling/branding) for the macOS legs.
+  extension:
+    default: dwarfs
+    aarch64-macos: tfs
+  # Image tooling: mkdwarfs + tebakofs from tamatebako/libtfs releases
+  # (static binaries, libSystem+libc++ / glibc-only), sha256-pinned from
+  # the release SHA256SUMS, re-verified on first fetch. Used on BOTH
+  # platform families: the dwarfs-t source build inkscape uses for its
+  # linux legs is avoided here — its dwarfsextract HANGS on GHA runners
+  # (proven: run 30337191027's boot-smoke hung 90 min in dwarfsextract;
+  # inkscape never hit it because its smoke dies on the mount attempt
+  # first and stays advisory). tebakofs extract is the proven extractor
+  # on both legs; the mount-mode fuse path is not needed for a library
+  # payload (boot_smoke is extract-mode by default, TPKG_TRY_FUSE=1
+  # experiments aside).
+  libtfs:
+    release: "v0.13.0"
+    sha256:
+      mkdwarfs-macos-arm64: "77c2d2c395a37a739ac73711ceb1011efdf2f8200aab1df4961ea0cff3fc959c"
+      tebakofs-macos-arm64: "f29a5e19b5c01ef5639099a65f12176f9d1afa36e3df3c03691568d09cf89357"
+      mkdwarfs-linux-gnu-x86_64: "72eca73a8e55c44e157e123f7b5b957fe5947015615da8c0526a100838b51070"
+      tebakofs-linux-gnu-x86_64: "4d13cc7413b8ab10b0f3f2f4fe8f1bdff0dba0ff802ba6702a40280d928b9d52"
+
+# Phase A legs (the feedstock matrix pattern): the dogfood platform and
+# the most common server platform. aarch64-linux-gnu and x86_64-macos
+# follow (PLATFORM_MAP already maps their runners).
+platforms:
+  - x86_64-linux-gnu
+  - aarch64-macos
+
+provides:
+  executables: []
+  libraries:
+    # soname libtebako-crypto.so.1 / install-leaf libtebako-crypto.1.dylib;
+    # the ABI tag in the leaf name matches tebako_crypto_v1_abi_version().
+    - {name: "tebako-crypto", path: "/lib/libtebako-crypto.so.1", version: "0.18.1", abi: "tebako_crypto_v1"}
+
+exec_tier: dynamic            # from build.link_mode
+exec_closure: []

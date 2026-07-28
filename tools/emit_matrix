@@ -1,0 +1,19 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Usage: ruby tools/emit_matrix recipe.yml
+# Emits the CI build matrix (JSON, one leg per version × platform) on stdout.
+# YAML stays thin; logic lives here.
+
+require_relative "lib/tpkg"
+
+recipe = Tpkg.recipe(ARGV[0] || "recipe.yml")
+version = recipe.dig("upstream", "version") or Tpkg.die("recipe missing upstream.version")
+platforms = recipe["platforms"] or Tpkg.die("recipe missing platforms")
+
+legs = platforms.map do |platform|
+  map = Tpkg::PLATFORM_MAP[platform] or Tpkg.die("unknown platform #{platform}")
+  { "version" => version, "platform" => platform, "runner" => map["runner"] }
+end
+
+puts JSON.generate({ "include" => legs })

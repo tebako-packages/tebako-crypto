@@ -1,0 +1,87 @@
+name: build-payload
+# Feedstock build: recipe → matrix build → boot-smoke → release.
+# Conventions: docs/conventions.md in tebako-packages/index.
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  matrix:
+    name: emit
+    runs-on: ubuntu-24.04
+    outputs:
+      legs: ${{ steps.m.outputs.legs }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - id: m
+        run: |
+          # The matrix is EMITTED from recipe.yml (YAML stays thin;
+          # logic lives in tools/). tools/emit_matrix emits one leg per
+          # (version × platform) in the recipe.
+          echo "legs=$(ruby tools/emit_matrix recipe.yml)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.platform }}
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.legs) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Toolchain ruby (macOS)
+        if: runner.os == 'macOS'
+        # feedstock tools need ruby >= 3 (endless defs in tools/lib/tpkg.rb);
+        # macOS system ruby is 2.6. brew puts /opt/homebrew/bin first in PATH.
+        run: brew install ruby
+      - name: Build ${{ matrix.version }} (${{ matrix.platform }})
+        run: tools/build recipe.yml "${{ matrix.version }}" "${{ matrix.platform }}"
+      - name: Stage artifact
+        run: tools/stage "out/${{ matrix.platform }}" "${{ matrix.platform }}"
+      - name: Boot-smoke
+        run: tools/boot_smoke "out/${{ matrix.platform }}"
+      - name: Upload payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: payload-${{ matrix.platform }}
+          # the release inputs only (images + manifests + hashes) — the
+          # build/work trees under out/ are gigabytes of intermediates
+          path: |
+            out/${{ matrix.platform }}/*.dwarfs
+            out/${{ matrix.platform }}/*.tfs
+            out/${{ matrix.platform }}/*.sha256
+            out/${{ matrix.platform }}/payload-*.yaml
+          retention-days: 7
+
+  release:
+    name: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Collect payloads
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: payload-*
+          path: out/
+          merge-multiple: false
+      - name: Restore layout
+        run: |
+          set -e
+          for d in out/payload-*/; do
+            p="${d#out/payload-}"; p="${p%/}"
+            mkdir -p "out/$p"
+            mv "$d"* "out/$p/"
+            rmdir "$d"
+          done
+      - name: Publish payloads + registry
+        run: tools/publish  # artifacts per triplet + SHA256SUMS + registry yaml pinned
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,7 @@
+schema_version: 1
+# This feedstock's own registry (conventions.md: releases carry it).
+packages:
+  - name: tebako-crypto
+    kind: toolkit
+    summary: OpenPGP crypto toolkit (librnp + Botan 3, full PQC) — libtebako-crypto v1 C ABI
+    registry: tfs:github:tebako-packages/tebako-crypto

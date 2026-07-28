@@ -1,0 +1,21 @@
+From: tebako-crypto feedstock
+Subject: rnp 0.18.x: include <cstring> in crypto/mem.cpp (gcc 13)
+
+mem.cpp uses strlen() without including <cstring>. It compiles on
+macOS only because clang's libc++ leaks the declaration transitively;
+gcc 13/libstdc++ (ubuntu-24.04) does not:
+
+    error: 'strlen' was not declared in this scope
+
+One-line include addition, identical to the fix upstream rnp main
+carries in the same file.
+--- a/src/lib/crypto/mem.cpp
++++ b/src/lib/crypto/mem.cpp
+@@ -25,6 +25,7 @@
+  */
+ 
+ #include <cstdio>
++#include <cstring>
+ #include "mem.h"
+ #include "logging.h"
+ #include <botan/ffi.h>

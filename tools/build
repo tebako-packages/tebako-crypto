@@ -1,0 +1,329 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Usage: tools/build recipe.yml <version> <platform>
+#
+# Build libtebako-crypto from source — NEVER from upstream prebuilts
+# (roadmap 72, owner-locked):
+#
+#   fetch (sha256-verified) -> static deps -> static librnp -> shared ABI lib
+#
+#   deps (out/<platform>/work/deps):  zlib, bzip2 (+bz_internal_error shim),
+#                                     json-c, Botan 3 (full, PQC asserted)
+#   rnp  (out/<platform>/work/rnp):   librnp.a + libsexpp.a, CRYPTO_BACKEND=
+#                                     botan3, ENABLE_PQC=ON (asserted)
+#   root (out/<platform>/root):       lib/libtebako-crypto.so.1 |
+#                                     lib/libtebako-crypto.1.dylib
+#                                     include/tebako_crypto_v1.h
+#
+# The artifact's runtime closure is libc/libm only (libstdc++/libgcc
+# static on linux; libc++ is the OS on macOS) — verified by a hard
+# otool/readelf sweep; a boot-smoke dlopen harness then proves the ABI.
+
+require_relative "lib/tpkg"
+require "tmpdir"
+
+recipe_path, version, platform = ARGV
+Tpkg.die("usage: tools/build recipe.yml <version> <platform>") unless recipe_path && version && platform
+
+recipe = Tpkg.recipe(recipe_path)
+Tpkg.die("platform #{platform} not in recipe platforms") unless recipe["platforms"].include?(platform)
+Tpkg.die("version #{version} != recipe upstream.version #{recipe.dig('upstream', 'version')}") unless version == recipe.dig("upstream", "version")
+
+macos = platform.end_with?("-macos")
+jobs = ENV.fetch("TPKG_JOBS", "4")
+
+out = File.join(Tpkg::ROOT, "out", platform)
+root = File.join(out, "root")
+work = File.join(out, "work")
+deps = File.join(work, "deps") # zlib/bzip2/json-c/botan install prefix
+rnp_p = File.join(work, "rnp")  # librnp install prefix
+FileUtils.mkdir_p([root, work])
+
+# --- 1. system packages (toolchain only — every crypto dependency is
+#         source-built below) ------------------------------------------
+pkgs = recipe.dig("build", "system_packages") || []
+if ENV["TPKG_SKIP_APT"] != "1" && system("command -v apt-get >/dev/null 2>&1") && !pkgs.empty?
+  sudo = Process.uid.zero? ? [] : ["sudo"]
+  3.times do |attempt|
+    begin
+      Tpkg.sh(*sudo, "apt-get", "update", "-qq")
+      Tpkg.sh(*sudo, "apt-get", "install", "-y", "-qq", *pkgs)
+      break
+    rescue SystemExit
+      raise if attempt == 2
+      Tpkg.warn("apt attempt #{attempt + 1} failed (lock?); retrying in 20s")
+      sleep 20
+    end
+  end
+end
+brew_pkgs = recipe.dig("build", "brew_packages") || []
+if macos && ENV["TPKG_SKIP_BREW"] != "1" && !brew_pkgs.empty?
+  Tpkg.sh("brew", "install", *brew_pkgs)
+end
+
+# --- 2. macOS floor (owner-locked; the 0.1.8 prebuilt-was-macOS-26
+#         lesson): ONE env var covers every compiler invocation below,
+#         including Botan's configure.py and the manual bzip2 compile. --
+if macos
+  ENV["MACOSX_DEPLOYMENT_TARGET"] = recipe.dig("build", "macos_deployment_target")
+  Tpkg.log("MACOSX_DEPLOYMENT_TARGET=#{ENV['MACOSX_DEPLOYMENT_TARGET']}")
+end
+
+# --- 3. sources (sha256-verified) --------------------------------------
+srcs = {}
+recipe.fetch("sources").each do |name, spec|
+  tarball = Tpkg.fetch(spec["url"], File.join(Tpkg.cache_dir, "src", File.basename(spec["url"])), spec["sha256"])
+  dir = File.join(work, "src", name)
+  unless File.directory?(dir)
+    FileUtils.mkdir_p(dir)
+    Tpkg.sh("tar", "-xf", tarball, "-C", dir, "--strip-components=1")
+  end
+  srcs[name] = dir
+end
+# rnp's libsexpp submodule ships empty in the tag archive — populate it
+# from the separately pinned sexpp source (see recipe.yml).
+libsexpp = File.join(srcs["rnp"], "src", "libsexpp")
+if Dir.empty?(libsexpp)
+  Tpkg.log("populating rnp's libsexpp submodule from the pinned sexpp source")
+  FileUtils.cp_r(Dir[File.join(srcs["sexpp"], "*"), File.join(srcs["sexpp"], ".*")].reject { |f| %w[. ..].include?(File.basename(f)) }, libsexpp)
+end
+Tpkg.die("rnp src/libsexpp is empty (submodule content missing)") if Dir.empty?(libsexpp)
+
+# Feedstock patches (conventions.md: tfs-<name>-<maj>-<min>-x-<slug>.patch;
+# a patch that fails git apply --check aborts the build). Applied once per
+# extraction; the stamp file keeps re-runs idempotent.
+patch_stamp = File.join(work, "src", ".patches-applied")
+unless File.exist?(patch_stamp)
+  Dir[File.join(Tpkg::ROOT, "patches", "*.patch")].sort.each do |patch|
+    target = File.basename(patch).start_with?("tfs-rnp-") ? srcs["rnp"] : nil
+    Tpkg.die("no patch target mapping for #{File.basename(patch)}") unless target
+    # --check first: a patch that does not apply cleanly aborts the build
+    Tpkg.sh("git", "apply", "--check", patch, chdir: target)
+    Tpkg.sh("git", "apply", patch, chdir: target)
+    Tpkg.log("applied #{File.basename(patch)}")
+  end
+  File.write(patch_stamp, Time.now.utc.to_s)
+end
+
+cmake_env = {}
+cmake_env["MACOSX_DEPLOYMENT_TARGET"] = ENV["MACOSX_DEPLOYMENT_TARGET"] if macos
+cmake_base = ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"]
+cmake_base << "-DCMAKE_OSX_DEPLOYMENT_TARGET=#{ENV['MACOSX_DEPLOYMENT_TARGET']}" if macos
+
+def built?(marker)
+  File.exist?(marker)
+end
+
+# --- 4. zlib (static, PIC) ----------------------------------------------
+z_marker = File.join(deps, "lib", "libz.a")
+unless built?(z_marker)
+  Tpkg.log("building zlib")
+  Tpkg.sh("cmake", "-S", srcs["zlib"], "-B", File.join(work, "build-zlib"), *cmake_base,
+          "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_INSTALL_PREFIX=#{deps}", env: cmake_env)
+  Tpkg.sh("cmake", "--build", File.join(work, "build-zlib"), "--parallel", jobs)
+  Tpkg.sh("cmake", "--install", File.join(work, "build-zlib"))
+end
+# zlib's cmake install drops a shared lib too when BUILD_SHARED_LIBS is on;
+# with OFF there is only libz.a — remove any stray shared variant so the
+# rnp link can never pick it up.
+Dir[File.join(deps, "lib", "libz.so*"), File.join(deps, "lib", "libz.*.dylib"), File.join(deps, "lib", "libz.dylib")].each { |f| FileUtils.rm_f(f) }
+
+# --- 5. bzip2 1.0.8 + the REQUIRED bz_internal_error shim ----------------
+# bzip2 1.0.8 declares but never defines bz_internal_error (proven against
+# the official tarball, the Debian pool, and all mirrors — see
+# src/bz_internal_shim.c for the provenance comment, copied from
+# tebako-signer). A static link fails full symbol resolution without the
+# shim; it is archived INTO libbz2.a here, at the only compilation site.
+bz_marker = File.join(deps, "lib", "libbz2.a")
+unless built?(bz_marker)
+  Tpkg.log("building bzip2 (+bz_internal_error shim)")
+  bz_build = File.join(work, "build-bzip2")
+  FileUtils.mkdir_p(bz_build)
+  cc = ENV.fetch("CC", "cc")
+  cflags = %w[-O2 -fPIC -D_FILE_OFFSET_BITS=64]
+  # the libbz2.a member set from bzip2's own Makefile
+  %w[blocksort huffman crctable randtable compress decompress bzlib].each do |mod|
+    Tpkg.sh(cc, *cflags, "-c", File.join(srcs["bzip2"], "#{mod}.c"), "-o", File.join(bz_build, "#{mod}.o"))
+  end
+  Tpkg.sh(cc, *cflags, "-c", File.join(Tpkg::ROOT, "src", "bz_internal_shim.c"), "-o", File.join(bz_build, "bz_internal_shim.o"))
+  objs = Dir[File.join(bz_build, "*.o")]
+  Tpkg.sh("ar", "rcs", bz_marker, *objs)
+  FileUtils.mkdir_p(File.join(deps, "include"))
+  FileUtils.cp(File.join(srcs["bzip2"], "bzlib.h"), File.join(deps, "include"))
+end
+# the shim must be in the archive — hard assert, not a comment
+unless Tpkg.capture("ar", "t", bz_marker).first.include?("bz_internal_shim.o")
+  Tpkg.die("libbz2.a lacks bz_internal_shim.o — the static link would fail (or worse, silently rely on a shared libbz2)")
+end
+unless Tpkg.capture("nm", bz_marker).first.match?(/T _?bz_internal_error/)
+  Tpkg.die("libbz2.a does not define bz_internal_error — shim missing or miscompiled")
+end
+
+# --- 6. json-c (static, PIC) ----------------------------------------------
+jc_marker = File.join(deps, "lib", "libjson-c.a")
+unless built?(jc_marker)
+  Tpkg.log("building json-c")
+  Tpkg.sh("cmake", "-S", srcs["json-c"], "-B", File.join(work, "build-json-c"), *cmake_base,
+          "-DBUILD_SHARED_LIBS=OFF", "-DBUILD_STATIC_LIBS=ON", "-DBUILD_APPS=OFF",
+          "-DDISABLE_WERROR=ON", "-DCMAKE_INSTALL_PREFIX=#{deps}", env: cmake_env)
+  Tpkg.sh("cmake", "--build", File.join(work, "build-json-c"), "--parallel", jobs)
+  Tpkg.sh("cmake", "--install", File.join(work, "build-json-c"))
+end
+
+# --- 7. Botan 3 (static, PIC, FULL — only 'unsupported' dropped; PQC
+#         modules asserted present) ---------------------------------------
+bot_marker = File.join(deps, "lib", "libbotan-3.a")
+unless built?(bot_marker)
+  Tpkg.log("building Botan (full; this is the long pole)")
+  bot_build = File.join(work, "build-botan")
+  FileUtils.mkdir_p(bot_build)
+  configure = recipe.dig("build", "botan_configure") or Tpkg.die("recipe missing build.botan_configure")
+  Tpkg.sh("python3", File.join(srcs["botan"], "configure.py"),
+          "--prefix=#{deps}", *configure.split, env: cmake_env, chdir: bot_build)
+  Tpkg.sh("make", "-j#{jobs}", "libs", chdir: bot_build)
+  Tpkg.sh("make", "install", chdir: bot_build)
+end
+# PQC presence is the whole point (owner-locked): assert the modules rnp's
+# ENABLE_PQC checks for, plus their standardized FIPS successors, are in
+# the built library's build.h.
+build_h = Dir[File.join(deps, "include", "botan-*", "botan", "build.h")].first or
+  Tpkg.die("botan build.h not found under #{deps}/include")
+build_h_text = File.read(build_h)
+%w[
+  BOTAN_HAS_KYBER BOTAN_HAS_DILITHIUM BOTAN_HAS_KMAC
+  BOTAN_HAS_SPHINCS_PLUS_WITH_SHA2 BOTAN_HAS_SPHINCS_PLUS_WITH_SHAKE
+  BOTAN_HAS_ML_KEM BOTAN_HAS_ML_DSA
+  BOTAN_HAS_SLH_DSA_WITH_SHA2 BOTAN_HAS_SLH_DSA_WITH_SHAKE
+].each do |macro|
+  Tpkg.die("Botan build lacks #{macro} — PQC is REQUIRED (owner-locked)") unless build_h_text.include?(macro)
+end
+Tpkg.log("Botan PQC modules present (KYBER/DILITHIUM/SPHINCS+/ML-KEM/ML-DSA/SLH-DSA)")
+
+# --- 8. librnp (static, botan3 backend, ENABLE_PQC=ON — asserted) --------
+rnp_marker = File.join(rnp_p, "lib", "librnp.a")
+unless built?(rnp_marker)
+  Tpkg.log("building librnp (CRYPTO_BACKEND=botan3, ENABLE_PQC=ON)")
+  opts = recipe.dig("build", "rnp_cmake_options").map { |k, v| "-D#{k}=#{v}" }
+  Tpkg.sh("cmake", "-S", srcs["rnp"], "-B", File.join(work, "build-rnp"), *cmake_base,
+          *opts,
+          "-DCMAKE_INSTALL_PREFIX=#{rnp_p}",
+          "-DCMAKE_PREFIX_PATH=#{deps}",
+          "-DBOTAN_ROOT_DIR=#{deps}",           # rnp's FindBotan: NO_DEFAULT_PATH pin
+          "-DZLIB_INCLUDE_DIR=#{File.join(deps, 'include')}",
+          "-DZLIB_LIBRARY=#{File.join(deps, 'lib', 'libz.a')}",
+          # modern FindBZip2: pre-setting BZIP2_LIBRARIES leaves the
+          # BZip2::BZip2 imported target without a location (CMP0111);
+          # BZIP2_LIBRARY_RELEASE feeds both the target and the variable.
+          "-DBZIP2_INCLUDE_DIR=#{File.join(deps, 'include')}",
+          "-DBZIP2_LIBRARY_RELEASE=#{File.join(deps, 'lib', 'libbz2.a')}",
+          env: cmake_env)
+  Tpkg.sh("cmake", "--build", File.join(work, "build-rnp"), "--parallel", jobs)
+  Tpkg.sh("cmake", "--install", File.join(work, "build-rnp"))
+end
+# ENABLE_PQC defaults OFF in rnp's cmake — prove it took. Two independent
+# witnesses: the cmake cache and the generated config.h.
+cache = File.read(File.join(work, "build-rnp", "CMakeCache.txt"))
+Tpkg.die("rnp CMakeCache shows ENABLE_PQC off — PQC is REQUIRED (owner-locked)") unless cache.match?(/^ENABLE_PQC:(BOOL|STRING)=ON/i)
+config_h = Dir[File.join(work, "build-rnp", "**", "config.h")].find { |f| File.read(f).include?("ENABLE_PQC") }
+Tpkg.die("rnp config.h lacks ENABLE_PQC — PQC is REQUIRED (owner-locked)") if config_h.nil? || !File.read(config_h).match?(/^#define ENABLE_PQC/)
+Tpkg.log("librnp ENABLE_PQC=ON confirmed (CMakeCache + config.h)")
+
+# --- 9. the ABI shared library -------------------------------------------
+Tpkg.log("linking libtebako-crypto (all crypto deps static)")
+Tpkg.sh("cmake", "-S", File.join(Tpkg::ROOT, "src"), "-B", File.join(work, "build-shim"), *cmake_base,
+        "-DTEBAKO_DEPS_PREFIX=#{deps}", "-DTEBAKO_RNP_PREFIX=#{rnp_p}",
+        "-DCMAKE_INSTALL_PREFIX=#{root}", env: cmake_env)
+Tpkg.sh("cmake", "--build", File.join(work, "build-shim"), "--parallel", jobs)
+Tpkg.sh("cmake", "--install", File.join(work, "build-shim"))
+
+libdir = File.join(root, "lib")
+if macos
+  artifact = File.join(libdir, "libtebako-crypto.1.dylib")
+else
+  # collapse the soname chain to the single shipped file (the payload is
+  # dlopen'd by absolute path; no linker symlinks inside the image — the
+  # libtfs extractor cannot read symlink inodes).
+  real = File.join(libdir, "libtebako-crypto.so.1.0.0")
+  FileUtils.rm_f([File.join(libdir, "libtebako-crypto.so"), File.join(libdir, "libtebako-crypto.so.1")])
+  FileUtils.mv(real, File.join(libdir, "libtebako-crypto.so.1"))
+  artifact = File.join(libdir, "libtebako-crypto.so.1")
+end
+Tpkg.die("artifact #{artifact} missing after install") unless File.exist?(artifact)
+
+# --- 10. closure proof: ONLY the OS family may remain ---------------------
+# No botan/json-c/bz2/rnp/zlib dylibs anywhere in the reference set —
+# every crypto dependency was linked statically above. This check is hard:
+# a leak fails the build, it is never warned through.
+Tpkg.log("closure sweep: #{File.basename(artifact)}")
+if macos
+  refs = Tpkg.otool_refs(artifact)
+  refs.each_with_index do |ref, i|
+    next if i.zero? # install name
+    Tpkg.die("closure leak (non-system ref): #{ref}") unless ref.match?(Tpkg::MACOS_SYSTEM_REF)
+  end
+  # the install name must be the @rpath leaf (dlopen consumer wires it)
+  Tpkg.die("bad install name: #{refs[0]}") unless refs[0] == "@rpath/libtebako-crypto.1.dylib"
+  # deployment floor evidence
+  ver, ok = Tpkg.capture("vtool", "-show-build-version", artifact)
+  Tpkg.warn("vtool unavailable: #{ver}") unless ok
+  minos = ver[/minos (\d+\.\d+)/, 1]
+  Tpkg.die("deployment target #{minos} != recipe floor 11.0") if ok && minos && minos != recipe.dig("build", "macos_deployment_target")
+  Tpkg.log("closure: #{refs.size - 1} refs, all /usr/lib|/System (install name @rpath/libtebako-crypto.1.dylib, minos #{minos})")
+else
+  out_txt, ok = Tpkg.capture("readelf", "-d", artifact)
+  Tpkg.die("readelf failed on #{artifact}:\n#{out_txt}") unless ok
+  needed = out_txt.scan(/\(NEEDED\).*?\[([^\]]+)\]/).flatten
+  allowed = %w[libc.so.6 libm.so.6 ld-linux-x86-64.so.2 libdl.so.2 libpthread.so.0 librt.so.1]
+  leaks = needed - allowed
+  Tpkg.die("closure leak (NEEDED beyond libc/libm family): #{leaks.join(', ')}") unless leaks.empty?
+  Tpkg.die("soname missing/wrong") unless out_txt.include?("(SONAME)") && out_txt.include?("libtebako-crypto.so.1")
+  Tpkg.log("closure: NEEDED = #{needed.join(', ')} (soname libtebako-crypto.so.1)")
+end
+
+# export-surface proof: the dynamic table exposes tebako_crypto_v1_* (and
+# the version strings) and NOTHING else — no botan/rnp/bz2/zlib symbols
+# may leak into a consumer's namespace.
+nm_cmd = macos ? ["nm", "-gU", artifact] : ["nm", "-D", "--defined-only", artifact]
+nm_out, nm_ok = Tpkg.capture(*nm_cmd)
+Tpkg.die("nm failed on #{artifact}:\n#{nm_out}") unless nm_ok
+exported = nm_out.scan(/(?:^|\s)([A-Za-z_]\w+)$/).flatten
+bad_exports = exported.reject { |s| s.start_with?("_tebako_crypto_v1_", "tebako_crypto_v1_", "_tebako_crypto_rnp_version_string", "tebako_crypto_rnp_version_string") }
+Tpkg.die("export-surface leak (non-ABI symbols exported):\n  #{bad_exports.first(20).join("\n  ")}#{"\n  … (#{bad_exports.size} total)" if bad_exports.size > 20}") unless bad_exports.empty?
+Tpkg.log("export surface: #{exported.size} symbols, all tebako_crypto_*")
+want_exports = %w[abi_version create destroy last_error load_keys generate_key export_key
+                  key_fingerprint keyid_from_fingerprint sign_detached verify_detached
+                  signature_issuer_fingerprint encrypt decrypt envelope_recipients
+                  armor_bytes dearmor_bytes]
+missing = want_exports.reject { |f| exported.any? { |s| s.end_with?("tebako_crypto_v1_#{f}") } }
+Tpkg.die("export surface INCOMPLETE — missing: #{missing.join(', ')}") unless missing.empty?
+
+# --- 11. strip (+codesign) -------------------------------------------------
+if macos
+  Tpkg.sh("strip", "-x", artifact)
+  Tpkg.codesign_tree(root)
+else
+  Tpkg.sh("strip", "--strip-unneeded", artifact)
+end
+
+# --- 12. pre-image smoke: dlopen the artifact and exercise the ABI --------
+# (empty environment — the artifact must stand alone)
+Tpkg.log("pre-image smoke")
+harness = File.join(work, "boot_smoke_harness")
+Tpkg.sh(ENV.fetch("CC", "cc"), "-O2", "-Wall",
+        "-I#{File.join(Tpkg::ROOT, 'include')}",
+        File.join(Tpkg::ROOT, "tools", "boot_smoke_harness.c"),
+        "-o", harness, *(macos ? [] : ["-ldl"]))
+home = Dir.mktmpdir
+smoke_out, ok = Tpkg.capture("env", "-i", "HOME=#{home}", harness, artifact)
+Tpkg.die("pre-image smoke failed:\n#{smoke_out}") unless ok
+Tpkg.log(smoke_out.strip)
+
+File.write(File.join(out, "build-meta.json"), JSON.pretty_generate({
+  "name" => recipe["name"], "version" => version, "platform" => platform,
+  "sources" => recipe["sources"].transform_values { |s| { "version" => s["version"], "sha256" => s["sha256"] } },
+  "artifact" => File.basename(artifact),
+  "artifact_bytes" => File.size(artifact),
+  "built_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+}))
+Tpkg.log("payload tree ready: #{root}")
