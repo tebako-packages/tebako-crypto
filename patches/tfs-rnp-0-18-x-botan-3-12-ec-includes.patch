@@ -1,0 +1,41 @@
+From: tebako-crypto feedstock
+Subject: rnp 0.18.x: include the full EC headers for Botan 3.12
+
+Botan 3.12 split the EC headers: <botan/ecc_key.h> (pulled in by
+<botan/ecdh.h>) now only FORWARD-DECLARES Botan::EC_Group and
+Botan::EC_Point — the full definitions live in <botan/ec_group.h> and
+<botan/ec_point.h>. rnp 0.18.1's ec.cpp and the PQC hybrid
+exdsa_ecdhkem.cpp use both classes by value/member access and fail:
+
+    error: 'Botan::EC_Group' is an incomplete type
+    error: member access into incomplete type 'const EC_Point'
+
+Include the two headers (plus <botan/bigint.h> in the KEM file, which
+used BigInt by value via the same transitive-include accident). Pure
+include additions, no code change; harmless against older Botan (the
+headers exist at least since 2.x). Upstream shape: rnp main carries
+the same implicit dependency and will need the same fix when it moves
+to Botan 3.12.
+--- a/src/lib/crypto/ec.cpp
++++ b/src/lib/crypto/ec.cpp
+@@ -38,6 +38,8 @@
+ #include "botan_utils.hpp"
+ #include "botan/bigint.h"
+ #include "botan/ecdh.h"
++#include "botan/ec_group.h"
++#include "botan/ec_point.h"
+ #include <cassert>
+ #endif
+ 
+--- a/src/lib/crypto/exdsa_ecdhkem.cpp
++++ b/src/lib/crypto/exdsa_ecdhkem.cpp
+@@ -33,6 +33,9 @@
+ #include "logging.h"
+ #include "string.h"
+ #include "utils.h"
++#include "botan/bigint.h"
++#include "botan/ec_group.h"
++#include "botan/ec_point.h"
+ #include <cassert>
+ 
+ ec_key_t::~ec_key_t()

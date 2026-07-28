@@ -1,0 +1,35 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Usage: tools/publish
+#
+# Release step (conventions.md): per-triplet payload artifacts + SHA256SUMS +
+# this repo's tpkg-registry.yaml, published to a GitHub release named after
+# the tag (<upstream-version>, `-N` suffix for packaging re-releases).
+# Expects CI to have downloaded every leg's out/<platform>/ into ./out/.
+
+require_relative "lib/tpkg"
+
+tag = ENV["GITHUB_REF_NAME"] || Tpkg.capture("git", "describe", "--tags", chdir: Tpkg::ROOT).first.strip
+Tpkg.die("not on a tag; refusing to publish") if tag.nil? || tag.empty?
+
+recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "recipe.yml"))
+version = recipe.dig("upstream", "version")
+Tpkg.die("tag #{tag} does not start with upstream version #{version}") unless tag.start_with?(version)
+
+images = Dir[File.join(Tpkg::ROOT, "out", "*", "*.{dwarfs,tfs}")].sort
+Tpkg.die("no payload images under out/ — nothing to publish") if images.empty?
+manifests = Dir[File.join(Tpkg::ROOT, "out", "*", "payload-*.yaml")].sort
+
+sums = File.join(Tpkg::ROOT, "out", "SHA256SUMS")
+File.write(sums, images.map { |i| "#{Tpkg.sha256(i)}  #{File.basename(i)}" }.join("\n") + "\n")
+
+registry = File.join(Tpkg::ROOT, "tpkg-registry.yaml")
+assets = images + manifests + [sums, registry]
+Tpkg.log("publishing #{assets.size} assets to release #{tag}")
+Tpkg.sh("gh", "release", "create", tag, *assets,
+        "--title", "#{recipe['name']} #{tag}",
+        "--notes", "tebako toolkit payload: #{recipe['summary']}\n\n" \
+                   "Per-triplet dwarfs images + payload manifests + SHA256SUMS + tpkg-registry.yaml.",
+        *(%w[--verify-tag]))
+Tpkg.log("PUBLISHED #{tag}")

@@ -1,0 +1,26 @@
+schema_version: 1
+# Payload manifest template for tebako-crypto (spec 03; filled from recipe.yml by tools/stage)
+identity:
+  schema_version: 1
+  kind: toolkit
+  name: "@@NAME@@"
+  version: "@@VERSION@@"
+  producer: {tool: feedstock-build, tool_version: "1"}
+  created: "@@CREATED@@"
+  source: {src_sha256: "@@UPSTREAM_SHA256@@", commit: "@@FEEDSTOCK_SHA@@", builder: "gha"}
+  digest:
+    tree_hash: ""        # merkle root when the CAS lands (spec 03)
+    blob_sha256: "@@BLOB_SHA256@@"
+  signing: {state: unsigned}
+  encryption: {state: none}
+  annotations: {}
+provides:
+  executables: []
+  libraries:
+    # the ABI tag in the leaf name matches tebako_crypto_v1_abi_version()
+    - {name: "@@NAME@@", path: "@@LIBPATH@@", version: "@@VERSION@@", abi: "tebako_crypto_v1"}
+exec_tier: dynamic
+exec_closure: []
+platforms: [x86_64-linux-gnu, aarch64-linux-gnu, aarch64-macos, x86_64-macos]
+capabilities: {exec: false, read: true}
+requires: []             # toolkit deps: {kind: toolkit, name, constraint, mount}

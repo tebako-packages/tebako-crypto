@@ -1,0 +1,64 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Usage: tools/stage out/<platform> <platform>
+#
+# Packs the payload tree (out/<platform>/root) into a dwarfs/tfs image
+# with mkdwarfs-t, sha256s it, and fills manifests/payload.yaml for the
+# platform. Outputs next to the tree:
+#   out/<platform>/tebako-crypto-<version>-<platform>.{dwarfs,tfs}
+#   out/<platform>/payload-<platform>.yaml
+
+require_relative "lib/tpkg"
+
+out_dir, platform = ARGV
+Tpkg.die("usage: tools/stage out/<platform> <platform>") unless out_dir && platform
+
+recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "recipe.yml"))
+name = recipe["name"]
+version = recipe.dig("upstream", "version")
+root = File.join(out_dir, "root")
+Tpkg.die("payload tree #{root} missing — run tools/build first") unless File.directory?(root)
+
+tools = Tpkg.ensure_dwarfs_tools(recipe, platform: platform)
+# ship the mounter tools alongside the image: boot_smoke (and users) get a
+# known-good tool set for this exact payload (dwarfs-t trio on linux,
+# mkdwarfs+tebakofs from libtfs on macOS)
+tbin = File.join(out_dir, "dwarfs-t-bin")
+FileUtils.mkdir_p(tbin)
+tools.each_value do |t|
+  next unless t && File.executable?(t)
+  dest = File.join(tbin, File.basename(t))
+  # rm first: an in-place truncate-rewrite of a signed binary invalidates
+  # its code signature on macOS (the next exec is SIGKILLed, "Killed: 9")
+  FileUtils.rm_f(dest)
+  FileUtils.cp(t, dest)
+end
+ext_map = recipe.dig("image", "extension") || {}
+ext = ext_map[platform] || ext_map["default"] || "dwarfs"
+img = File.join(out_dir, "#{name}-#{version}-#{platform}.#{ext}")
+FileUtils.rm_f(img)
+Tpkg.sh(tools["mkdwarfs"], "-i", root, "-o", img, "--force")
+digest = Tpkg.sha256(img)
+File.write("#{img}.sha256", "#{digest}  #{File.basename(img)}\n")
+Tpkg.log("image #{img} (#{(File.size(img) / 1e6).round(1)} MB) sha256=#{digest[0, 16]}…")
+
+# the per-platform library leaf (the ABI tag is in the name)
+libpath = platform.end_with?("-macos") ? "/lib/libtebako-crypto.1.dylib" : "/lib/libtebako-crypto.so.1"
+
+# fill the payload manifest from the recipe (spec 03)
+feedstock_sha, feedstock_ok = Tpkg.capture("git", "rev-parse", "HEAD", chdir: Tpkg::ROOT)
+feedstock_sha = feedstock_ok ? feedstock_sha.strip : "unknown"
+tpl = File.read(File.join(Tpkg::ROOT, "manifests", "payload.yaml"))
+filled = tpl
+         .gsub("@@NAME@@", name)
+         .gsub("@@VERSION@@", version)
+         .gsub("@@CREATED@@", Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
+         .gsub("@@UPSTREAM_SHA256@@", recipe.dig("sources", "rnp", "sha256"))
+         .gsub("@@FEEDSTOCK_SHA@@", feedstock_sha)
+         .gsub("@@BLOB_SHA256@@", digest)
+         .gsub("@@LIBPATH@@", libpath)
+         .gsub(/platforms: \[.*\]/, "platforms: [#{platform}]")
+manifest = File.join(out_dir, "payload-#{platform}.yaml")
+File.write(manifest, filled)
+Tpkg.log("manifest #{manifest}")
