@@ -8,6 +8,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# One run per branch/PR-head at a time: pushing to a branch with an open
+# PR would otherwise run every job twice (push + pull_request events);
+# a new run cancels the stale one. Tags get their own group (a tag push
+# and its branch push must not cancel each other's release).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
