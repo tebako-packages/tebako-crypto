@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Usage: tools/build recipe.yml <version> <platform>
+# Usage: tools/build Tebakofile <version> <platform>
 #
 # Build libtebako-crypto from source — NEVER from upstream prebuilts
 # (roadmap 72, owner-locked):
@@ -24,7 +24,7 @@ require_relative "lib/tpkg"
 require "tmpdir"
 
 recipe_path, version, platform = ARGV
-Tpkg.die("usage: tools/build recipe.yml <version> <platform>") unless recipe_path && version && platform
+Tpkg.die("usage: tools/build Tebakofile <version> <platform>") unless recipe_path && version && platform
 
 recipe = Tpkg.recipe(recipe_path)
 Tpkg.die("platform #{platform} not in recipe platforms") unless recipe["platforms"].include?(platform)
@@ -82,7 +82,7 @@ recipe.fetch("sources").each do |name, spec|
   srcs[name] = dir
 end
 # rnp's libsexpp submodule ships empty in the tag archive — populate it
-# from the separately pinned sexpp source (see recipe.yml).
+# from the separately pinned sexpp source (see Tebakofile).
 libsexpp = File.join(srcs["rnp"], "src", "libsexpp")
 if Dir.empty?(libsexpp)
   Tpkg.log("populating rnp's libsexpp submodule from the pinned sexpp source")

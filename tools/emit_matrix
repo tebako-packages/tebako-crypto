@@ -1,13 +1,13 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Usage: ruby tools/emit_matrix recipe.yml
+# Usage: ruby tools/emit_matrix Tebakofile
 # Emits the CI build matrix (JSON, one leg per version × platform) on stdout.
 # YAML stays thin; logic lives here.
 
 require_relative "lib/tpkg"
 
-recipe = Tpkg.recipe(ARGV[0] || "recipe.yml")
+recipe = Tpkg.recipe(ARGV[0] || "Tebakofile")
 version = recipe.dig("upstream", "version") or Tpkg.die("recipe missing upstream.version")
 platforms = recipe["platforms"] or Tpkg.die("recipe missing platforms")
 

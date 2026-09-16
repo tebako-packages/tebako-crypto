@@ -13,7 +13,7 @@ require_relative "lib/tpkg"
 tag = ENV["GITHUB_REF_NAME"] || Tpkg.capture("git", "describe", "--tags", chdir: Tpkg::ROOT).first.strip
 Tpkg.die("not on a tag; refusing to publish") if tag.nil? || tag.empty?
 
-recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "recipe.yml"))
+recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "Tebakofile"))
 version = recipe.dig("upstream", "version")
 Tpkg.die("tag #{tag} does not start with upstream version #{version}") unless tag.start_with?(version)
 

@@ -14,7 +14,7 @@ require_relative "lib/tpkg"
 out_dir, platform = ARGV
 Tpkg.die("usage: tools/stage out/<platform> <platform>") unless out_dir && platform
 
-recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "recipe.yml"))
+recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "Tebakofile"))
 name = recipe["name"]
 version = recipe.dig("upstream", "version")
 root = File.join(out_dir, "root")

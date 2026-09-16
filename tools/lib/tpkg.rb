@@ -125,7 +125,7 @@ module Tpkg
 
   # Locate or obtain the image tools (mkdwarfs + a mount/extract helper).
   # Order: $MKDWARFS env → libtfs release assets (sha256-pinned in recipe
-  # image.libtfs; BOTH platform families — see recipe.yml for why the
+  # image.libtfs; BOTH platform families — see Tebakofile for why the
   # dwarfs-t source build is avoided) → tool cache → pinned dwarfs-t
   # source build (fallback for platforms without libtfs pins).
   def ensure_dwarfs_tools(recipe, platform: nil)

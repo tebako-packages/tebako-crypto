@@ -1,5 +1,5 @@
 schema_version: 1
-# Payload manifest template for tebako-crypto (spec 03; filled from recipe.yml by tools/stage)
+# Payload manifest template for tebako-crypto (spec 03; filled from Tebakofile by tools/stage)
 identity:
   schema_version: 1
   kind: toolkit

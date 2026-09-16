@@ -29,10 +29,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - id: m
         run: |
-          # The matrix is EMITTED from recipe.yml (YAML stays thin;
+          # The matrix is EMITTED from Tebakofile (YAML stays thin;
           # logic lives in tools/). tools/emit_matrix emits one leg per
           # (version × platform) in the recipe.
-          echo "legs=$(ruby tools/emit_matrix recipe.yml)" >> "$GITHUB_OUTPUT"
+          echo "legs=$(ruby tools/emit_matrix Tebakofile)" >> "$GITHUB_OUTPUT"
 
   build:
     name: ${{ matrix.platform }}
@@ -49,7 +49,7 @@ jobs:
         # macOS system ruby is 2.6. brew puts /opt/homebrew/bin first in PATH.
         run: brew install ruby
       - name: Build ${{ matrix.version }} (${{ matrix.platform }})
-        run: tools/build recipe.yml "${{ matrix.version }}" "${{ matrix.platform }}"
+        run: tools/build Tebakofile "${{ matrix.version }}" "${{ matrix.platform }}"
       - name: Stage artifact
         run: tools/stage "out/${{ matrix.platform }}" "${{ matrix.platform }}"
       - name: Boot-smoke

@@ -20,7 +20,7 @@ dlopens the payload and compiles none of it.
 
 All sha256 values were computed locally over the first fetch from the
 official hosts (GitHub release/archive endpoints, botan.randombit.net,
-sourceware.org) and pinned in `recipe.yml`. NEVER upstream prebuilts —
+sourceware.org) and pinned in `Tebakofile`. NEVER upstream prebuilts —
 the feedstock exists precisely so upstream prebuilt correctness stops
 mattering anywhere in the ecosystem (roadmap 72).
 
@@ -186,7 +186,7 @@ stateless — key material is passed per call and never retained.
 ## Image tooling
 
 mkdwarfs + tebakofs come from tamatebako/libtfs release v0.13.0 on BOTH
-platform families (static binaries; sha256-pinned in `recipe.yml`
+platform families (static binaries; sha256-pinned in `Tebakofile`
 `image.libtfs`, re-verified on first fetch). The inkscape feedstock's
 linux pattern — building mkdwarfs/dwarfs/dwarfsextract from the pinned
 dwarfs-t commit with vcpkg — was evaluated and rejected here, on
@@ -203,7 +203,7 @@ platforms without libtfs pins).
 ## Proof (aarch64-macos leg, native Apple Silicon host)
 
 **Build: PROVEN end-to-end** (2026-07-28, macOS 14 arm64 host, no
-emulation). `tools/build recipe.yml 0.18.1 aarch64-macos`:
+emulation). `tools/build Tebakofile 0.18.1 aarch64-macos`:
 
 - 6 sources fetched sha256-verified (rnp + sexpp submodule pin + Botan +
   json-c + zlib + bzip2), libsexpp populated, the Botan-3.12 EC-include
