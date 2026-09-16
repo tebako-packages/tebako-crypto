@@ -47,7 +47,7 @@ allocations cross the boundary.
 ## Feedstock flow (conventions: tebako-packages/index)
 
 ```
-tools/build recipe.yml 0.18.1 aarch64-macos   # fetch+build+closure+pre-image smoke
+tools/build Tebakofile 0.18.1 aarch64-macos   # fetch+build+closure+pre-image smoke
 tools/stage out/aarch64-macos aarch64-macos   # pack image + manifest
 tools/boot_smoke out/aarch64-macos            # dlopen FROM the image, full ABI exercise
 ```

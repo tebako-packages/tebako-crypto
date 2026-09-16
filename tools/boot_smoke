@@ -16,7 +16,7 @@ require_relative "lib/tpkg"
 require "tmpdir"
 
 out_dir = ARGV[0] or Tpkg.die("usage: tools/boot_smoke out/<platform>")
-recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "recipe.yml"))
+recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "Tebakofile"))
 name = recipe["name"]
 img = Dir[File.join(out_dir, "*.{dwarfs,tfs}")].first or Tpkg.die("no .dwarfs/.tfs image in #{out_dir}")
 platform = File.basename(img).sub(/\A#{name}-[\d.]+-/, "").sub(/\.(dwarfs|tfs)\z/, "")
