@@ -1,0 +1,41 @@
+#!/usr/bin/env ruby
+# recipe_query — read a value from a feedstock Tebakofile.
+# Usage: recipe_query RECIPE KEY...
+#   KEY is dot-separated; numeric segments index into arrays.
+# Scalars print as-is; arrays/hashes print as JSON (valid YAML flow).
+# Missing keys are a hard error (no silent fallbacks).
+#
+# Examples:
+#   recipe_query Tebakofile upstream.url
+#   recipe_query Tebakofile provides.executables.0.path
+#   recipe_query Tebakofile platforms
+
+require 'yaml'
+require 'json'
+
+abort "usage: recipe_query RECIPE KEY..." if ARGV.length < 2
+
+recipe = YAML.load_file(ARGV[0])
+
+ARGV[1..].each do |key|
+  value = recipe
+  key.split('.').each do |seg|
+    value =
+      case value
+      when Hash
+        abort "recipe_query: key '#{key}' not found (at '#{seg}')" unless value.key?(seg)
+        value[seg]
+      when Array
+        idx = Integer(seg, exception: false)
+        abort "recipe_query: '#{seg}' in '#{key}' is not an array index" if idx.nil? || idx >= value.length
+        value[idx]
+      else
+        abort "recipe_query: '#{key}' walks past a scalar (at '#{seg}')"
+      end
+  end
+  case value
+  when Array, Hash then puts JSON.generate(value)
+  when nil then abort "recipe_query: key '#{key}' is null"
+  else puts value
+  end
+end
