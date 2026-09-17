@@ -90,6 +90,7 @@ jobs:
             rmdir "$d"
           done
       - name: Publish payloads + registry
-        run: tools/publish  # artifacts per triplet + SHA256SUMS + registry yaml pinned
+        run: tools/publish  # signed: images + SHA256SUMS + resolved registry, .asc alongside
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEBAKO_SIGNING_KEY: ${{ secrets.TEBAKO_CI_SIGNING_KEY }}

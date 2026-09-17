@@ -119,6 +119,21 @@ image:
       mkdwarfs-linux-gnu-x86_64: "72eca73a8e55c44e157e123f7b5b957fe5947015615da8c0526a100838b51070"
       tebakofs-linux-gnu-x86_64: "4d13cc7413b8ab10b0f3f2f4fe8f1bdff0dba0ff802ba6702a40280d928b9d52"
 
+# Signing (spec 09 §9): on tag pushes the publish step signs every payload
+# image, SHA256SUMS, and the resolved registry with the CI signing subkey of
+# the tamatebako root, supplied as the org secret TEBAKO_CI_SIGNING_KEY; the
+# registry pins the PRIMARY keyid (the identity, not the rotating subkey
+# instrument). A declared signing block with an absent secret fails the
+# publish — a signing feedstock never ships an unsigned release silently.
+# The signer binary is fetched from the pinned release and verified against
+# the pinned digest (the same trust-anchor role as the sources' sha256s).
+signing:
+  keyid: "efc3c250f7862a48" # 2026-09-09 tamatebako root primary (low 64)
+  tool:
+    repo: "tamatebako/tebako"
+    release: "v2.8.8"
+    sha256: "f6af6b9c0b0756cbdc7f3824d36649fc5b1f95605738afee94d5116478284ebe" # tebako-pkg-2.8.8-linux-gnu-x86_64
+
 # Phase A legs (the feedstock matrix pattern): the dogfood platform and
 # the most common server platform. aarch64-linux-gnu and x86_64-macos
 # follow (PLATFORM_MAP already maps their runners).
