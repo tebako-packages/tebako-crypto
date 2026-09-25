@@ -1,7 +1,20 @@
+---
 schema_version: 1
-# This feedstock's own registry (conventions.md: releases carry it).
-packages:
-  - name: tebako-crypto
-    kind: toolkit
-    summary: OpenPGP crypto toolkit (librnp + Botan 3, full PQC) — libtebako-crypto v1 C ABI
-    registry: tfs:github:tebako-packages/tebako-crypto
+payloads:
+- name: tebako-crypto
+  kind: toolkit
+  versions:
+  - version: 0.18.1
+    platforms:
+      aarch64-macos:
+        artifact: tebako-crypto-0.18.1-aarch64-macos.tfs
+        sha256: 107751e4cebf2a17489037ea605c429c3a6a21257b063033a5d3075e38b00b33
+      x86_64-linux-gnu:
+        artifact: tebako-crypto-0.18.1-x86_64-linux-gnu.tfs
+        sha256: f0490d3b55a2619e7ebc702015e7f517cbd6b4a8c1e40717bb73b9159f6ad7c0
+    release:
+      ref: tfs:github:tebako-packages/tebako-crypto:0.18.1-1
+    signature:
+      keyid: efc3c250f7862a48
+      asc: tebako-crypto-0.18.1-aarch64-macos.tfs.asc
+  default: 0.18.1
