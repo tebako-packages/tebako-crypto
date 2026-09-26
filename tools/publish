@@ -35,7 +35,7 @@ case "$TAG" in
 esac
 
 shopt -s nullglob
-IMAGES=(out/*/*.tfs out/*/*.dwarfs)
+IMAGES=(out/*/*.tfs)
 MANIFESTS=(out/*/payload-*.yaml)
 [ "${#IMAGES[@]}" -gt 0 ] || { echo "publish: no payload images under out/ — nothing to publish" >&2; exit 1; }
 
@@ -62,12 +62,12 @@ end.to_h
 
 # spec 04 §2's per-triplet map: triplet => {artifact, sha256} — the
 # registry-supplied trust anchor; artifact names are release assets.
-artifacts = Dir.glob('out/*/*.{tfs,dwarfs}').sort.map { |f| File.basename(f) }
+artifacts = Dir.glob('out/*/*.tfs').sort.map { |f| File.basename(f) }
 prefix = "#{name}-#{version}-"
 platforms = artifacts.to_h do |art|
   abort "publish: artifact '#{art}' does not match #{prefix}<triplet>.<ext>" unless art.start_with?(prefix)
   triplet = art.delete_prefix(prefix)
-  %w[.tfs .dwarfs].each { |ext| triplet = triplet.delete_suffix(ext) }
+  triplet = triplet.delete_suffix(".tfs")
   abort "publish: artifact '#{art}' carries no triplet" if triplet.empty?
   [triplet, {
     'artifact' => art,

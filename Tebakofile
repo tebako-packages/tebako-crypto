@@ -95,29 +95,24 @@ build:
     - ruby                    # feedstock tools need >= 2.7; system ruby is 2.6
 
 image:
-  format: dwarfs
-  # .tfs everywhere (tebako fs image — the DwarFS-T format, our own
-  # extension; never the legacy .dwarfs).
+  format: limnifs
+  # .tfs everywhere (the tebako fs image — LimniFS, the default format;
+  # the store extension stays .tfs regardless of format).
   extension:
     default: tfs
-  # Image tooling: mkdwarfs + tebakofs from tamatebako/libtfs releases
-  # (static binaries, libSystem+libc++ / glibc-only), sha256-pinned from
-  # the release SHA256SUMS, re-verified on first fetch. Used on BOTH
-  # platform families: the dwarfs-t source build inkscape uses for its
-  # linux legs is avoided here — its dwarfsextract HANGS on GHA runners
-  # (proven: run 30337191027's boot-smoke hung 90 min in dwarfsextract;
-  # inkscape never hit it because its smoke dies on the mount attempt
-  # first and stays advisory). tebakofs extract is the proven extractor
-  # on both legs; the mount-mode fuse path is not needed for a library
-  # payload (boot_smoke is extract-mode by default, TPKG_TRY_FUSE=1
-  # experiments aside).
-  libtfs:
-    release: "v0.13.0"
+  # Image tooling: the tfs CLI from the tamatebako/tebako release — the
+  # imager (`tfs mkimage`, limnifs) and the smoke's extract reader on
+  # BOTH platform families. The asset digests are pinned here (the
+  # repo's toolchain pin SSOT — the same trust-anchor role as
+  # upstream.sha256) and cross-checked against the release's own
+  # SHA256SUMS at fetch time (tools/lib/tpkg.rb's ensure_tfs_cli). No
+  # factory binaries, no source-built image tools anywhere.
+  tfs_cli:
+    repo: "tamatebako/tebako"
+    release: "v2.8.17"
     sha256:
-      mkdwarfs-macos-arm64: "77c2d2c395a37a739ac73711ceb1011efdf2f8200aab1df4961ea0cff3fc959c"
-      tebakofs-macos-arm64: "f29a5e19b5c01ef5639099a65f12176f9d1afa36e3df3c03691568d09cf89357"
-      mkdwarfs-linux-gnu-x86_64: "72eca73a8e55c44e157e123f7b5b957fe5947015615da8c0526a100838b51070"
-      tebakofs-linux-gnu-x86_64: "4d13cc7413b8ab10b0f3f2f4fe8f1bdff0dba0ff802ba6702a40280d928b9d52"
+      tfs-linux-gnu-x86_64: "083e4886f751901493d124cf90f8dc20a88fb9ba0877db9af1a5b42d0c1d64db"
+      tfs-macos-arm64: "f2c957bd27a3b2fea871e04bdf5c8de3689a8327a1474ca698e3936eaf239661"
 
 # Signing (spec 09 §9): on tag pushes the publish step signs every payload
 # image, SHA256SUMS, and the resolved registry with the CI signing subkey of
