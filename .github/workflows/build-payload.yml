@@ -61,7 +61,6 @@ jobs:
           # the release inputs only (images + manifests + hashes) — the
           # build/work trees under out/ are gigabytes of intermediates
           path: |
-            out/${{ matrix.platform }}/*.dwarfs
             out/${{ matrix.platform }}/*.tfs
             out/${{ matrix.platform }}/*.sha256
             out/${{ matrix.platform }}/payload-*.yaml

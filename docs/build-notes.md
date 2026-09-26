@@ -2,7 +2,7 @@
 
 The crypto toolkit payload: `libtebako-crypto`, a shared library exposing
 the versioned C ABI `tebako_crypto_v1_*` over librnp (OpenPGP) + Botan 3
-with full PQC, packed as a dwarfs/tfs payload. **This feedstock is the
+with full PQC, packed as a limnifs/tfs payload. **This feedstock is the
 ONLY rnp compilation site in the tebako ecosystem** (owner-locked):
 everything is built here, from source, with our flags; every consumer
 dlopens the payload and compiles none of it.
@@ -185,20 +185,13 @@ stateless — key material is passed per call and never retained.
 
 ## Image tooling
 
-mkdwarfs + tebakofs come from tamatebako/libtfs release v0.13.0 on BOTH
-platform families (static binaries; sha256-pinned in `Tebakofile`
-`image.libtfs`, re-verified on first fetch). The inkscape feedstock's
-linux pattern — building mkdwarfs/dwarfs/dwarfsextract from the pinned
-dwarfs-t commit with vcpkg — was evaluated and rejected here, on
-evidence: the dwarfs-t-built **dwarfsextract hangs on GHA runners**
-(run 30337191027's boot-smoke hung 90 minutes inside dwarfsextract
-before cancellation; inkscape never hit it because its smoke dies on
-the mount attempt first and stays advisory `|| true`). tebakofs extract
-is the proven extractor on both legs. The mount-mode fuse path is
-unneeded for a library payload: boot_smoke is extract-mode by default
-(TPKG_TRY_FUSE=1 keeps a mount experiment possible on fuse-known-good
-hosts, with the dwarfs-t source build remaining as the fallback for
-platforms without libtfs pins).
+The imager and the smoke's extract reader are the same pinned **tfs CLI**
+from the tamatebako/tebako release on BOTH platform families
+(`tfs mkimage` — limnifs, the default tebako image format; sha256-pinned
+in `Tebakofile` `image.tfs_cli`, cross-checked against the release's
+SHA256SUMS on first fetch). No factory binaries and no source-built
+image tools anywhere in the pipeline. The mount-mode fuse path is
+unneeded for a library payload: boot_smoke is extract-mode everywhere.
 
 ## Proof (aarch64-macos leg, native Apple Silicon host)
 
@@ -255,10 +248,11 @@ leaks into a consumer's namespace. (linux: `-Wl,--exclude-libs,ALL`.)
 BOOT_SMOKE_OK
 ```
 
-**Image + boot-smoke from the image: PROVEN.** mkdwarfs (libtfs v0.13.0
-release asset, sha256-verified): `tebako-crypto-0.18.1-aarch64-macos.tfs`
+**Image + boot-smoke from the image: PROVEN.** tfs mkimage (at the time
+the libtfs mkdwarfs asset; since the limnifs sweep the pinned tebako tfs
+CLI): `tebako-crypto-0.18.1-aarch64-macos.tfs`
 = **1,865,255 bytes** (1.9 MB), payload manifest filled by tools/stage.
-`tools/boot_smoke` — tebakofs extract (no macFUSE; the documented
+`tools/boot_smoke` — tfs extract (at the time tebakofs; the documented
 degraded path), harness compiled against the header SHIPPED IN THE
 IMAGE, run with `env -i` against the dylib in the image: full ABI
 exercise green (same output shape as above), otool sweep on the
@@ -284,7 +278,7 @@ documented EC-include patch):**
   names): `--disable-shared-library`; PIC is unconditional ("so that
   position independent executables can be created that link to the
   static library").
-- Re-staging over an existing `dwarfs-t-bin/` copy SIGKILLED
+- Re-staging over an existing `image-tools/` copy SIGKILLED
   tebakofs (`Killed: 9`): an in-place truncate-rewrite of a signed
   binary invalidates its code signature. tools/stage removes the
   destination before copying.

@@ -3,10 +3,11 @@
 
 # Usage: tools/stage out/<platform> <platform>
 #
-# Packs the payload tree (out/<platform>/root) into a dwarfs/tfs image
-# with mkdwarfs-t, sha256s it, and fills manifests/payload.yaml for the
+# Packs the payload tree (out/<platform>/root) into a limnifs/tfs image
+# with the pinned tfs CLI (`tfs mkimage`; limnifs, the default tebako
+# image format), sha256s it, and fills manifests/payload.yaml for the
 # platform. Outputs next to the tree:
-#   out/<platform>/tebako-crypto-<version>-<platform>.{dwarfs,tfs}
+#   out/<platform>/tebako-crypto-<version>-<platform>.tfs
 #   out/<platform>/payload-<platform>.yaml
 
 require_relative "lib/tpkg"
@@ -20,25 +21,26 @@ version = recipe.dig("upstream", "version")
 root = File.join(out_dir, "root")
 Tpkg.die("payload tree #{root} missing — run tools/build first") unless File.directory?(root)
 
-tools = Tpkg.ensure_dwarfs_tools(recipe, platform: platform)
-# ship the mounter tools alongside the image: boot_smoke (and users) get a
-# known-good tool set for this exact payload (dwarfs-t trio on linux,
-# mkdwarfs+tebakofs from libtfs on macOS)
-tbin = File.join(out_dir, "dwarfs-t-bin")
+tools = Tpkg.ensure_tfs_cli(recipe, platform: platform)
+# ship the image tool alongside the image: boot_smoke (and users) get a
+# known-good reader for this exact payload (the pinned tfs CLI on every
+# platform)
+tbin = File.join(out_dir, "image-tools")
 FileUtils.mkdir_p(tbin)
-tools.each_value do |t|
+tools.each do |tname, t|
   next unless t && File.executable?(t)
-  dest = File.join(tbin, File.basename(t))
+  dest = File.join(tbin, tname)   # the bare tool name (tfs), not the asset name
   # rm first: an in-place truncate-rewrite of a signed binary invalidates
   # its code signature on macOS (the next exec is SIGKILLed, "Killed: 9")
   FileUtils.rm_f(dest)
   FileUtils.cp(t, dest)
+  FileUtils.chmod(0o755, dest)
 end
 ext_map = recipe.dig("image", "extension") || {}
-ext = ext_map[platform] || ext_map["default"] || "dwarfs"
+ext = ext_map[platform] || ext_map["default"] || "tfs"
 img = File.join(out_dir, "#{name}-#{version}-#{platform}.#{ext}")
 FileUtils.rm_f(img)
-Tpkg.sh(tools["mkdwarfs"], "-i", root, "-o", img, "--force")
+Tpkg.sh(tools["tfs"], "mkimage", "--format", "limnifs", root, "--output", img)
 digest = Tpkg.sha256(img)
 File.write("#{img}.sha256", "#{digest}  #{File.basename(img)}\n")
 Tpkg.log("image #{img} (#{(File.size(img) / 1e6).round(1)} MB) sha256=#{digest[0, 16]}…")
