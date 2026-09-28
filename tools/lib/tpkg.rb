@@ -133,7 +133,7 @@ module Tpkg
     unless File.exist?(sums)
       sh("curl", "-fsSL", "--retry", "3", "--no-progress-meter", "-o", sums, "#{base}/SHA256SUMS")
     end
-    got = File.readlines(sums).map(&:split).to_h[asset]
+    got = File.readlines(sums).to_h { |line| line.split.reverse }[asset]
     die("pin mismatch for #{asset}: recipe=#{want} release=#{got || 'ABSENT'}") unless got == want
     bin = fetch("#{base}/#{asset}", File.join(dir, asset), want)
     FileUtils.chmod(0o755, bin)
