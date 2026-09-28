@@ -4,8 +4,9 @@
 # Usage: tools/boot_smoke out/<platform>
 #
 # Boot-smoke (conventions.md): dlopen the packaged libtebako-crypto FROM
-# THE IMAGE (mounted via dwarfs-t fuse; dwarfsextract/tebakofs extract as
-# the documented degraded fallback), with an EMPTY environment, and run
+# THE IMAGE (extracted with the pinned tfs CLI — extraction is THE smoke
+# path for a library payload: no FUSE semantics are needed to prove the
+# bytes), with an EMPTY environment, and run
 # the full ABI exercise (tools/boot_smoke_harness.c): ABI version, key
 # generation, export, sign/verify with the Trusted/Untrusted/Invalid
 # classification, armor round-trip, and the ENC envelope round-trip
@@ -18,73 +19,19 @@ require "tmpdir"
 out_dir = ARGV[0] or Tpkg.die("usage: tools/boot_smoke out/<platform>")
 recipe = Tpkg.recipe(File.join(Tpkg::ROOT, "Tebakofile"))
 name = recipe["name"]
-img = Dir[File.join(out_dir, "*.{dwarfs,tfs}")].first or Tpkg.die("no .dwarfs/.tfs image in #{out_dir}")
-platform = File.basename(img).sub(/\A#{name}-[\d.]+-/, "").sub(/\.(dwarfs|tfs)\z/, "")
+img = Dir[File.join(out_dir, "*.tfs")].first or Tpkg.die("no .tfs image in #{out_dir}")
+platform = File.basename(img).sub(/\A#{name}-[\d.]+-/, "").sub(/\.tfs\z/, "")
 macos = platform.end_with?("-macos")
 lib_leaf = macos ? "libtebako-crypto.1.dylib" : "libtebako-crypto.so.1"
-tools = Tpkg.ensure_dwarfs_tools(recipe, platform: platform)
-# prefer the image tools staged next to the image (same run's build/download)
-%w[mkdwarfs dwarfs dwarfsextract tebakofs].each do |t|
-  staged = File.join(out_dir, "dwarfs-t-bin", t)
-  tools[t] = staged if File.executable?(staged)
-end
-# the staged tools keep their release asset names (mkdwarfs-linux-gnu-x86_64,
-# tebakofs-macos-arm64, …) — map them back to the bare tool names
-Dir[File.join(out_dir, "dwarfs-t-bin", "*")].each do |f|
-  base = File.basename(f)
-  t = base.sub(/-(macos|linux-gnu|linux-musl)-(arm64|x86_64)(\.exe)?\z/, "")
-  tools[t] = f if t != base && File.executable?(f)
-end
+tools = Tpkg.ensure_tfs_cli(recipe, platform: platform)
+# prefer the image tool staged next to the image (same run's build/download)
+staged = File.join(out_dir, "image-tools", "tfs")
+tools["tfs"] = staged if File.executable?(staged)
 
-# the dwarfs fuse driver needs fusermount3 (setuid helper); only the
-# opt-in mount path (TPKG_TRY_FUSE=1) needs it
-if !macos && ENV["TPKG_TRY_FUSE"] == "1" && !system("command -v fusermount3 >/dev/null 2>&1") && system("command -v apt-get >/dev/null 2>&1")
-  sudo = Process.uid.zero? ? [] : ["sudo"]
-  Tpkg.sh(*sudo, "apt-get", "install", "-y", "-qq", "fuse3")
-end
-
-mnt = nil
-extracted = nil
-# Mount-mode smoke is OPT-IN (TPKG_TRY_FUSE=1): on GHA the dwarfs fuse
-# driver wedges the mountpoint without serving it (inkscape hit the same
-# wall and left its smoke advisory) — and a stat on a dead fuse mount
-# blocks uninterruptibly in the kernel, hanging the job past any poll
-# bound. A LIBRARY payload needs no FUSE semantics: extracting the image
-# and dlopening the .so proves the same bytes, so extract is the default
-# everywhere, not a degradation.
-if !macos && ENV["TPKG_TRY_FUSE"] == "1" && tools["dwarfs"] && File.exist?("/dev/fuse")
-  mnt = Dir.mktmpdir("tpkg-mnt")
-  # foreground (-f, honored by libfuse): keeps driver output on the log and
-  # the process under our control; poll briefly for the mount to appear
-  dwlog = File.join(out_dir, "dwarfs-mount.log")
-  pid = spawn(tools["dwarfs"], "-f", img, mnt, %i[out err] => dwlog)
-  60.times { break if File.exist?(File.join(mnt, "lib", lib_leaf)); sleep 0.5 }
-  if File.exist?(File.join(mnt, "lib", lib_leaf))
-    point = mnt
-    Tpkg.log("mounted #{img} at #{mnt}")
-  else
-    Process.kill("TERM", pid) rescue nil
-    sleep 1
-    system("fusermount3", "-u", mnt) || system("fusermount", "-u", mnt) || system("umount", mnt)
-    FileUtils.rm_rf(mnt)
-    mnt = nil
-    Tpkg.warn("dwarfs mount did not come up (see dwarfs-mount.log) — falling back to extract")
-    Tpkg.warn(File.read(dwlog)) if File.exist?(dwlog) && File.size(dwlog) > 0
-  end
-end
-unless mnt
-  extracted = Dir.mktmpdir("tpkg-extract")
-  if tools["dwarfsextract"]
-    Tpkg.log("extract-mode smoke (dwarfsextract)")
-    Tpkg.sh(tools["dwarfsextract"], "-i", img, "-o", extracted)
-  elsif tools["tebakofs"]
-    Tpkg.log("extract-mode smoke (tebakofs; no fuse mount on this platform)")
-    Tpkg.sh(tools["tebakofs"], "extract", "-d", extracted, img)
-  else
-    Tpkg.die("no fuse and no extract tool (dwarfsextract/tebakofs) available")
-  end
-  point = extracted
-end
+extracted = Dir.mktmpdir("tpkg-extract")
+Tpkg.log("extract-mode smoke (tfs extract)")
+Tpkg.sh(tools["tfs"], "extract", "-d", extracted, img)
+point = extracted
 
 begin
   lib = File.join(point, "lib", lib_leaf)
@@ -126,12 +73,6 @@ begin
     Tpkg.log("readelf sweep: NEEDED = #{needed.join(', ')}")
   end
 ensure
-  if mnt
-    Process.kill("TERM", pid) rescue nil
-    sleep 1
-    system("fusermount3", "-u", mnt) || system("fusermount", "-u", mnt) || system("umount", mnt)
-    FileUtils.rm_rf(mnt)
-  end
   FileUtils.rm_rf(extracted) if extracted
 end
 Tpkg.log("BOOT_SMOKE_OK #{File.basename(img)}")

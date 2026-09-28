@@ -3,7 +3,7 @@
 The tebako **crypto toolkit payload** (roadmap 72/73): `libtebako-crypto`,
 a shared library exposing the versioned C ABI `tebako_crypto_v1_*` over
 **librnp 0.18.1** (OpenPGP) + **Botan 3.12.0** (full, PQC), packed as a
-tebako payload (dwarfs/tfs image + payload manifest) and published via
+tebako payload (limnifs/tfs image + payload manifest) and published via
 GitHub Releases like every tebako-packages feedstock.
 
 **This feedstock is the ONLY rnp compilation site in the tebako

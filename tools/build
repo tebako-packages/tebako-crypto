@@ -242,8 +242,7 @@ if macos
   artifact = File.join(libdir, "libtebako-crypto.1.dylib")
 else
   # collapse the soname chain to the single shipped file (the payload is
-  # dlopen'd by absolute path; no linker symlinks inside the image — the
-  # libtfs extractor cannot read symlink inodes).
+  # dlopen'd by absolute path; no linker symlinks inside the image).
   real = File.join(libdir, "libtebako-crypto.so.1.0.0")
   FileUtils.rm_f([File.join(libdir, "libtebako-crypto.so"), File.join(libdir, "libtebako-crypto.so.1")])
   FileUtils.mv(real, File.join(libdir, "libtebako-crypto.so.1"))
