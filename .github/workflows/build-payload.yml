@@ -93,3 +93,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TEBAKO_SIGNING_KEY: ${{ secrets.TEBAKO_CI_SIGNING_KEY }}
+
+  ping-registry:
+    # The official registry's 6-hourly aggregate is the self-healing
+    # backstop; this reusable ping (tebako-packages/registry) makes a
+    # same-day publish visible there immediately. Never fatal.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release]
+    uses: tebako-packages/registry/.github/workflows/ping-aggregate.yml@main
+    secrets: inherit
