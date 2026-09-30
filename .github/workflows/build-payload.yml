@@ -70,6 +70,13 @@ jobs:
     name: publish
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
+    # attestations/id-token arm the SLSA L3 provenance step at the job
+    # tail (same tag gate — push/PR runs never run this job, so they
+    # never attest).
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -93,6 +100,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TEBAKO_SIGNING_KEY: ${{ secrets.TEBAKO_CI_SIGNING_KEY }}
+
+      # SLSA L3 provenance over the exact bytes this tag ships —
+      # enumerated to match tools/publish's upload set: the per-triplet
+      # .tfs images + payload-*.yaml manifests, the .asc set (next to each
+      # signed input when the recipe signs), and the SHA256SUMS +
+      # tpkg-registry.yaml trust anchors. The legs' *.sha256 sidecars are
+      # in-run artifacts only (never release assets), so the enumeration
+      # never names them. Gated with the job (tag runs only); push/PR
+      # runs never attest.
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            out/*/*.tfs
+            out/*/payload-*.yaml
+            out/*/*.asc
+            out/*.asc
+            out/SHA256SUMS
+            out/tpkg-registry.yaml
 
   ping-registry:
     # The official registry's 6-hourly aggregate is the self-healing
