@@ -5,8 +5,14 @@
 #
 # Packs the payload tree (out/<platform>/root) into a limnifs/tfs image
 # with the pinned tfs CLI (`tfs mkimage`; limnifs, the default tebako
-# image format), sha256s it, and fills manifests/payload.yaml for the
-# platform. Outputs next to the tree:
+# image format) with the tier-1 payload manifest EMBEDDED at
+# /__tpkg__/manifest.yaml — `tebako install` mirrors the in-image
+# manifest, and for a toolkit payload there is no synthesis fallback:
+# an image without the embed fails install by name (exit 65). Proves
+# the embed by reading the manifest back out of the packed image,
+# validates it against the product's versioned JSON Schema (pinned in
+# the recipe), sha256s the image, and fills the sidecar manifest for
+# the platform. Outputs next to the tree:
 #   out/<platform>/tebako-crypto-<version>-<platform>.tfs
 #   out/<platform>/payload-<platform>.yaml
 
@@ -39,11 +45,6 @@ end
 ext_map = recipe.dig("image", "extension") || {}
 ext = ext_map[platform] || ext_map["default"] || "tfs"
 img = File.join(out_dir, "#{name}-#{version}-#{platform}.#{ext}")
-FileUtils.rm_f(img)
-Tpkg.sh(tools["tfs"], "mkimage", "--format", "limnifs", root, "--output", img)
-digest = Tpkg.sha256(img)
-File.write("#{img}.sha256", "#{digest}  #{File.basename(img)}\n")
-Tpkg.log("image #{img} (#{(File.size(img) / 1e6).round(1)} MB) sha256=#{digest[0, 16]}…")
 
 # the per-platform library leaf (the ABI tag is in the name)
 libpath = platform.end_with?("-macos") ? "/lib/libtebako-crypto.1.dylib" : "/lib/libtebako-crypto.so.1"
@@ -52,15 +53,61 @@ libpath = platform.end_with?("-macos") ? "/lib/libtebako-crypto.1.dylib" : "/lib
 feedstock_sha, feedstock_ok = Tpkg.capture("git", "rev-parse", "HEAD", chdir: Tpkg::ROOT)
 feedstock_sha = feedstock_ok ? feedstock_sha.strip : "unknown"
 tpl = File.read(File.join(Tpkg::ROOT, "manifests", "payload.yaml"))
-filled = tpl
-         .gsub("@@NAME@@", name)
-         .gsub("@@VERSION@@", version)
-         .gsub("@@CREATED@@", Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
-         .gsub("@@UPSTREAM_SHA256@@", recipe.dig("sources", "rnp", "sha256"))
-         .gsub("@@FEEDSTOCK_SHA@@", feedstock_sha)
-         .gsub("@@BLOB_SHA256@@", digest)
-         .gsub("@@LIBPATH@@", libpath)
-         .gsub(/platforms: \[.*\]/, "platforms: [#{platform}]")
+fill = lambda do |blob_sha256|
+  tpl
+    .gsub("@@NAME@@", name)
+    .gsub("@@VERSION@@", version)
+    .gsub("@@CREATED@@", Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    .gsub("@@UPSTREAM_SHA256@@", recipe.dig("sources", "rnp", "sha256"))
+    .gsub("@@FEEDSTOCK_SHA@@", feedstock_sha)
+    .gsub("@@BLOB_SHA256@@", blob_sha256)
+    .gsub("@@LIBPATH@@", libpath)
+    .gsub(/platforms: \[.*\]/, "platforms: [#{platform}]")
+end
+check_filled = lambda do |text, label|
+  left = text.scan(/@@[A-Z_]+@@/).uniq
+  Tpkg.die("unfilled placeholders in #{label}: #{left.join(', ')}") unless left.empty?
+end
+
+# The EMBEDDED manifest (tier 1, authoritative) goes in BEFORE the pack:
+# the in-image digest can never name the image that carries it, so the
+# zeros placeholder stands inside the image (spec 03 §7); the .sha256
+# sidecar / the registry pin stays the trust anchor.
+embedded = fill.call("0" * 64)
+check_filled.call(embedded, "the embedded manifest")
+FileUtils.mkdir_p(File.join(root, "__tpkg__"))
+File.write(File.join(root, "__tpkg__", "manifest.yaml"), embedded)
+
+FileUtils.rm_f(img)
+Tpkg.sh(tools["tfs"], "mkimage", "--format", "limnifs", root, "--output", img)
+digest = Tpkg.sha256(img)
+File.write("#{img}.sha256", "#{digest}  #{File.basename(img)}\n")
+Tpkg.log("image #{img} (#{(File.size(img) / 1e6).round(1)} MB) sha256=#{digest[0, 16]}…")
+
+# --- read-back: a broken payload fails THIS leg, never the publish ----
+# The embedded tier-1 manifest must read back out of THIS image, parse
+# as YAML, and every library path it declares must exist in the image.
+back, ok = Tpkg.capture(tools["tfs"], "cat", img, "/__tpkg__/manifest.yaml")
+Tpkg.die("read-back FAILED — no /__tpkg__/manifest.yaml in #{img}") unless ok
+parsed = YAML.safe_load(back)
+Tpkg.die("read-back FAILED — the embedded manifest of #{img} is not valid YAML") unless parsed.is_a?(Hash)
+declared = (parsed.dig("provides", "libraries") || []).map { |l| l["path"] }
+Tpkg.die("read-back FAILED — the embedded manifest of #{img} declares no libraries") if declared.empty?
+declared.each do |p|
+  _, found = Tpkg.capture(tools["tfs"], "stat", img, p)
+  Tpkg.die("read-back FAILED — declared library #{p} missing from #{img}") unless found
+  Tpkg.log("read-back: #{p} present")
+end
+
+# --- schema validation (the product's versioned JSON Schema, pinned) --
+schema = Tpkg.manifest_schema(recipe)
+Tpkg.validate_manifest!(back, schema, label: "the embedded manifest of #{img}")
+
+# the sidecar carries the artifact's real digest (the in-image one stays
+# zeros — the fixed-point rule above)
 manifest = File.join(out_dir, "payload-#{platform}.yaml")
-File.write(manifest, filled)
-Tpkg.log("manifest #{manifest}")
+sidecar = fill.call(digest)
+check_filled.call(sidecar, manifest)
+File.write(manifest, sidecar)
+Tpkg.validate_manifest!(sidecar, schema, label: manifest)
+Tpkg.log("manifest #{manifest} (schema-validated)")

@@ -113,6 +113,14 @@ image:
     sha256:
       linux-gnu-x86_64: "8b752cb7bc8337960bf77f36cc375e6bc6f75b1d78e6d50c0000a33b26be51b9"
       macos-arm64: "38f4493c1a65d37ace603db171c23d9a4580bd6053e3a3007800fbcf7a494d83"
+  # The payload-manifest JSON Schema tools/stage validates the rendered
+  # manifest against (spec 03): consumed from the SAME pinned product
+  # release as the tfs CLI above (that pin is the product-version SSOT —
+  # the schema is fetched, never vendored), digest-pinned like every
+  # other input.
+  manifest_schema:
+    path: "schema/tpkg-manifest-v1.schema.json"
+    sha256: "912107795bd97087a3b42a059b873223dabe44bf58d70266be38b2b21d4d1b08"
 
 # Signing (spec 09 §9): on tag pushes the publish step signs every payload
 # image, SHA256SUMS, and the resolved registry with the CI signing subkey of

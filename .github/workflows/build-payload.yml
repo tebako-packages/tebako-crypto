@@ -50,6 +50,12 @@ jobs:
         run: brew install ruby
       - name: Build ${{ matrix.version }} (${{ matrix.platform }})
         run: tools/build Tebakofile "${{ matrix.version }}" "${{ matrix.platform }}"
+      - name: Manifest validator gem
+        # tools/stage validates the rendered payload manifest against the
+        # product's versioned JSON Schema (pinned in the Tebakofile); the
+        # validator is a stage-time toolchain gem, user-installed (never
+        # the system gems).
+        run: gem install --user-install json_schemer -v 2.5.0 --no-document
       - name: Stage artifact
         run: tools/stage "out/${{ matrix.platform }}" "${{ matrix.platform }}"
       - name: Boot-smoke
