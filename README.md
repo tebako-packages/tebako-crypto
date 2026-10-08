@@ -48,7 +48,7 @@ allocations cross the boundary.
 
 ```
 tools/build Tebakofile 0.18.1 aarch64-macos   # fetch+build+closure+pre-image smoke
-tools/stage out/aarch64-macos aarch64-macos   # pack image + manifest
+tools/stage out/aarch64-macos aarch64-macos   # embed the manifest, pack, read-back + schema-validate
 tools/boot_smoke out/aarch64-macos            # dlopen FROM the image, full ABI exercise
 ```
 

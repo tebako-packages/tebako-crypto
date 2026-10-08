@@ -37,6 +37,10 @@ begin
   lib = File.join(point, "lib", lib_leaf)
   Tpkg.die("#{lib} missing in image") unless File.exist?(lib)
   Tpkg.die("ABI header missing in image") unless File.exist?(File.join(point, "include", "tebako_crypto_v1.h"))
+  # the tier-1 manifest rides inside the image (install mirrors it) —
+  # assert it on the extraction path too, not only in tools/stage's
+  # read-back
+  Tpkg.die("in-image manifest missing in image") unless File.exist?(File.join(point, "__tpkg__", "manifest.yaml"))
 
   # the harness compiles against the shipped header and dlopens the lib
   # from the image — the same shape the tebako-side client will use.

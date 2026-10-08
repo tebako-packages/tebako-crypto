@@ -140,6 +140,37 @@ module Tpkg
     { "tfs" => bin }
   end
 
+  # The product's versioned payload-manifest JSON Schema, consumed from
+  # the SAME pinned tamatebako/tebako release as the tfs CLI (the
+  # recipe's image.tfs_cli pin is the product-version SSOT) — fetched
+  # digest-pinned like every other input, never a vendored copy.
+  def manifest_schema(recipe)
+    spec = recipe.fetch("image").fetch("manifest_schema")
+    cli = recipe.fetch("image").fetch("tfs_cli")
+    path = spec.fetch("path")
+    url = "https://raw.githubusercontent.com/#{cli.fetch('repo')}/#{cli.fetch('release')}/#{path}"
+    fetch(url, File.join(cache_dir, "schema", File.basename(path)), spec.fetch("sha256"))
+  end
+
+  # Validate a manifest text against the JSON Schema. The validator gem
+  # is a stage-time toolchain dependency (CI installs it); a missing
+  # validator fails the build — schema validation is never silently
+  # skipped.
+  def validate_manifest!(text, schema_path, label:)
+    begin
+      require "json_schemer"
+    rescue LoadError
+      die("json_schemer is required to validate #{label} — gem install json_schemer (CI: the workflow's validator step)")
+    end
+    doc = YAML.safe_load(text)
+    schema = JSON.parse(File.read(schema_path))
+    errors = JSONSchemer.schema(schema).validate(doc).to_a
+    return if errors.empty?
+
+    lines = errors.map { |e| "  #{e['data_pointer']}: #{e['type']}" }
+    die("#{label} fails #{File.basename(schema_path)}:\n#{lines.join("\n")}")
+  end
+
   # Parse `ldd` output into {soname => resolved_path}.
   def ldd_resolve(file, libdirs)
     env = { "LD_LIBRARY_PATH" => libdirs.join(":") }
